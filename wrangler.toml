@@ -1,0 +1,49 @@
+# Paulian Sync relay: the template that "Deploy to Cloudflare" uses. Works on the Workers FREE plan.
+# No account name, route or domain in here: your relay lives at https://<worker-name>.<your-subdomain>.workers.dev
+name = "paulian-sync-relay"
+main = "src/index.ts"
+# Set this to a recent date when you update the project.
+compatibility_date = "2026-10-01"
+
+# Your relay's address (the one you paste into Paulian Calendar) is the workers.dev address.
+workers_dev = true
+
+# Free plan: Durable Objects must use the SQLite storage backend (the migrations below do that).
+[[durable_objects.bindings]]
+name = "GROUPS"
+class_name = "GroupDO"
+
+# v2: one Durable Object per sync group, plus a short-lived pairing mailbox per pairing id.
+[[durable_objects.bindings]]
+name = "GROUPS_V2"
+class_name = "GroupV2DO"
+
+[[durable_objects.bindings]]
+name = "PAIRS"
+class_name = "PairDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GroupDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["GroupV2DO", "PairDO"]
+
+# Per-IP rate limit in front of the per-group limits (Workers Rate Limiting API). Needs no setup.
+[[ratelimits]]
+name = "IP_LIMITER"
+namespace_id = "1001"
+simple = { limit = 300, period = 60 }
+
+[vars]
+# Delete a group's data after this many days without any sync activity.
+RETENTION_DAYS = "90"
+# Protocol v2 (the only protocol new relays need): inactivity retention and history pruning age, in days.
+RETENTION_DAYS_V2 = "90"
+# Legacy v1 is OFF for new relays. Do not change this.
+V1_MODE = "off"
+V1_READONLY_UNTIL = "2099-01-01T00:00:00Z"
+
+[observability]
+enabled = false   # do not keep request logs (privacy)

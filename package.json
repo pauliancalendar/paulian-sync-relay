@@ -1,0 +1,44 @@
+{
+  "name": "paulian-sync-relay",
+  "private": true,
+  "version": "1.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "Paulian Calendar sync relay for Cloudflare Workers + Durable Objects (free plan). Deploy your own: end-to-end encrypted, no account, no secrets.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run test/core.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261023.1",
+    "@types/node": "^22.20.5",
+    "@types/ws": "^8.18.2",
+    "libsodium-wrappers-sumo": "^0.8.4",
+    "typescript": "5.9",
+    "vitest": "^5.0.5",
+    "wrangler": "^4.152.0",
+    "ws": "^8.22.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "RETENTION_DAYS_V2": {
+        "description": "Days without any sync activity after which a group's encrypted data is deleted from **your** relay. Default `90`."
+      },
+      "V1_MODE": {
+        "description": "Leave as `off`. Old sync protocol, not needed for a new relay."
+      },
+      "RETENTION_DAYS": {
+        "description": "Only used by the old protocol. Leave as is."
+      },
+      "V1_READONLY_UNTIL": {
+        "description": "Only used by the old protocol. Leave as is."
+      }
+    }
+  }
+}

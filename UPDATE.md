@@ -9,11 +9,12 @@ you update*, sync stays off until you do this once.
 
 ## Which version do I have?
 
-Open `https://<your address>/v1/health` in a browser (your address is the one ending in `.workers.dev`). Look for
+Open `https://<your address>/v2/health` in a browser (your address is the one ending in `.workers.dev`). Look for
 `"relayVersion":"..."`. If that line is missing, you have version 1.0.0.
 
 | Version | What changed |
 |---|---|
+| 1.2.0 | The old sync protocol is removed (`/v1/...` now answers 404). Updating deletes any data your server still holds in that old format; calendars and diaries synced with the current protocol are not affected. Apps now check `/v2/health`. |
 | 1.1.0 | The health page now shows `relayVersion`, so the app can tell you when an update is available. |
 | 1.0.0 | First public version. |
 
@@ -31,7 +32,7 @@ account. Cloudflare rebuilds and redeploys your server every time that copy chan
    **Add file → Upload files** and drag in the new `src` and `test` folders and the files `package.json`,
    `package-lock.json`, `tsconfig.json` and `wrangler.toml` from the unzipped folder. Then press **Commit changes**.
 4. Wait about a minute. In the Cloudflare dashboard, *Workers & Pages* → your server → *Deployments* shows the new
-   deployment as it finishes. Then open `https://<your address>/v1/health` again: `relayVersion` should show the new number.
+   deployment as it finishes. Then open `https://<your address>/v2/health` again: `relayVersion` should show the new number.
 
 Do **not** rename your server and do **not** delete it. A server with a different name is a new, empty server, and your
 devices would have to be set up on it again. Keep the same name (normally `paulian-sync-relay`).
@@ -57,4 +58,6 @@ press *Sync now*). If it does not, see the table in [DEPLOY.md](DEPLOY.md).
 
 * Check the build log in the Cloudflare dashboard (*Workers & Pages* → your server → *Deployments*).
 * Make sure you replaced `src` completely (old files left behind can cause a build error).
-* Your data is safe: you can always go back by uploading the previous files again.
+* Your data is safe: the calendar and diary on your devices are never touched by an update.
+* Going back to an older version of the files is not supported after updating to 1.2.0 (the update removes the storage the old
+  protocol used). If something is wrong, fix the build and redeploy 1.2.0.

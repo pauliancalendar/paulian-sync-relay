@@ -14,7 +14,7 @@ you keep a copy you control). No credit card is needed for the Workers Free plan
    address will be `https://paulian-sync-relay.<your-subdomain>.workers.dev`.
 6. **Copy your relay address.** It is shown when the deploy finishes. Later, find it in the Cloudflare dashboard:
    *Workers & Pages* → your Worker → *Settings* → *Domains & Routes* (the `workers.dev` entry). The wording of Cloudflare's pages can change slightly.
-7. **Check it:** open `https://<your address>/v1/health` in a browser. You should see text containing
+7. **Check it:** open `https://<your address>/v2/health` in a browser. You should see text containing
    `"ok":true` and `"service":"paulian-sync-relay"`.
 8. **Paste the address into Paulian Calendar** (Sync → Set up your relay) and press *Check and use this relay*.
 9. Create your sync code. When you add your next device, scanning the QR code on it also sets up the relay there.
@@ -24,7 +24,7 @@ you keep a copy you control). No credit card is needed for the Workers Free plan
 
 | Problem | What to do |
 |---|---|
-| The app says "That address did not answer" | Open `https://<address>/v1/health` in a browser. If that works, check your internet connection and any VPN or firewall. |
+| The app says "That address did not answer" | Open `https://<address>/v2/health` in a browser. If that works, check your internet connection and any VPN or firewall. |
 | The app says "This is not a Paulian relay" | The address is some other Worker. Copy the address of the `paulian-sync-relay` Worker. |
 | The app says it must end in `.workers.dev` | Use the address Cloudflare gave you. Custom domains are not supported yet. |
 | Build failed on Cloudflare | Open the build log in the dashboard. Retry the deploy. Make sure the Durable Objects feature is allowed on your plan (Workers Free supports the SQLite kind used here). |

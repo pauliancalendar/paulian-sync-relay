@@ -96,19 +96,19 @@ export function corsHeaders2(): Record<string, string> {
 const J = (body: unknown, status = 200, extra: Record<string, string> = {}) => json(body, status, { ...corsHeaders2(), ...extra });
 const E = (status: number, code: string, extra: Record<string, string> = {}) => err(status, code, { ...corsHeaders2(), ...extra });
 
-/** Self-reported signature the apps look for on /v1/health (a sanity check against typos and look-alike Workers, not authentication). */
+/** Self-reported signature the apps look for on /v2/health (a sanity check against typos and look-alike Workers, not authentication). */
 export const RELAY_SERVICE_ID = 'paulian-sync-relay';
 
 /**
  * The relay software version, "major.minor.patch" (keep equal to package.json "version"). The apps compare it with the newest
  * and the oldest version they know: older than newest -> "an update is available"; older than their minimum -> sync is paused until
  * the relay is updated. Bump it whenever the relay's behaviour changes, and add the entry to UPDATE.md.
- * A relay that reports no `relayVersion` is a 1.0.0 relay (the field was added in 1.1.0).
+ * A relay that reports no `relayVersion` is a 1.0.0 relay (the field was added in 1.1.0). 1.2.0 removed the old protocol (v1).
  */
-export const RELAY_VERSION = '1.1.0';
+export const RELAY_VERSION = '1.2.0';
 
-export function healthResponse2(impl: string, v1Mode: string): Response {
-  return J({ ok: true, service: RELAY_SERVICE_ID, relayVersion: RELAY_VERSION, protocol: PROTOCOL_VERSION_V2, versions: v1Mode === 'off' ? [2] : [1, 2], v1: v1Mode, impl });
+export function healthResponse2(impl: string): Response {
+  return J({ ok: true, service: RELAY_SERVICE_ID, relayVersion: RELAY_VERSION, protocol: PROTOCOL_VERSION_V2, versions: [2], impl });
 }
 
 export function parsePathV2(pathname: string): { kind: 'group'; gid: string; sub: string } | { kind: 'pair'; pid: string; slot: string } | null {
@@ -361,23 +361,6 @@ export async function handlePair(req: Request, slot: string, store: PairStore, n
     return J({ ok: true });
   }
   return E(405, 'method_not_allowed');
-}
-
-/**
- * v1 gate: 'readwrite' (legacy), 'readonly' (transition: reads only), 'off'.
- * In 'readonly' a v1 WRITE answers 503 `v1_read_only` + Retry-After (retryable): the Android 1.7.0 client keeps its
- * queued edits on 503/429 but DROPS them on any other 4xx (measured with a test probe), so 410 would silently lose
- * edits. 410 `v1_retired` is only used once v1 is finished (past V1_READONLY_UNTIL, or mode 'off').
- */
-export const V1_RETRY_AFTER_SECONDS = 900;
-export type V1Gate = { ok: true } | { ok: false; code: 'v1_read_only' | 'v1_retired'; status: 503 | 410; retryAfter?: number };
-export function v1Allowed(mode: string, until: string | undefined, method: string, now: number): V1Gate {
-  if (mode === 'readwrite') return { ok: true };
-  if (mode === 'readonly') {
-    if (until) { const t = Date.parse(until); if (Number.isFinite(t) && now > t) return { ok: false, code: 'v1_retired', status: 410 }; }
-    return method === 'GET' || method === 'HEAD' || method === 'OPTIONS' ? { ok: true } : { ok: false, code: 'v1_read_only', status: 503, retryAfter: V1_RETRY_AFTER_SECONDS };
-  }
-  return { ok: false, code: 'v1_retired', status: 410 };
 }
 
 /** In-memory store (tests and as a reference for self-host). */

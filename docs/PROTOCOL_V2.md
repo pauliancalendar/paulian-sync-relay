@@ -1,7 +1,7 @@
 # Paulian Sync protocol v2
 
 Status: implemented in this relay and in the Paulian Calendar desktop (Mac, Windows) and Android apps. Test vectors for the wire format (`sync_v2_vectors.json`) are kept with the apps.
-Companion: `SECURITY.md` (threat model, what each part fixes, residual risks). v1 is described in `PROTOCOL.md`.
+Companion: `SECURITY.md` (threat model, what each part fixes, residual risks).
 
 Conventions: `||` is concatenation; integers are big-endian; `hex` is lowercase; `b64u` is base64url without padding;
 all strings are UTF-8. `trunc16(x)` is the first 16 bytes. Every value in this document that says "random" comes from the
@@ -65,7 +65,11 @@ signature     = Ed25519(edSk, UTF-8 of the string)
   `{"type":"changes","changes":[{"seq","blob"}]}` frames, sends `{"type":"ready","latest","epoch","head","logLength"}`, and pushes
   further `changes` frames live (a client that sees `logLength` grow pulls the log over HTTP). `ping` is answered with `pong`.
   Close codes: 4401 auth (bad frame, bad signature, 10 s timeout), 4403 removed, 4429 rate limited, 4000 group deleted.
-* Public: `GET /v2/health` (also `/v1/health` and `/`) -> `{ok, service:"paulian-sync-relay", relayVersion:"1.1.0", protocol:2, versions:[2] (or [1,2] while v1 is on), v1:"readwrite|readonly|off", impl}`. `relayVersion` is the relay software version (semver); a relay without the field is 1.0.0. Nothing else is public.
+* Public: `GET /v2/health` (also `/`) -> `{ok, service:"paulian-sync-relay", relayVersion, protocol:2, versions:[2], impl}`. Nothing else is public.
+  `relayVersion` is the relay software version (semver `x.y.z`); a missing field means 1.0.0.
+  Apps compare it with two constants (`relayVersion.ts`): below `LATEST_RELAY_VERSION` -> a dismissible "update available" note
+  (dismissal remembered per latest version); below `MIN_RELAY_VERSION` -> sync is paused with a clear message until the relay is updated
+  (local data untouched). An unreadable answer keeps the previous verdict. Update guide: `UPDATE.md` in the public relay repository.
 
 ### Endpoints
 
@@ -187,8 +191,7 @@ Because the code is not the group key, a photo of the code is only useful within
   local state. Failures of `DELETE` or removal are surfaced to the user with the relay name, never swallowed.
 * **Seal at enqueue.** A change is encrypted when it is queued (the plaintext is not kept longer than needed) and persisted
   before upload; on `409 stale_epoch` the client fetches the log, re-seals and retries.
-* **No silent downgrade.** If any configured relay speaks v2, create/join use v2. v1 is used only if every relay is reachable and
-  none offers v2 (then it is labelled "legacy"). An unreachable relay never leads to a v1 group.
+* **Protocol check.** A relay must list protocol 2 in `/v2/health`; anything else is refused (`old_protocol`). There is no other protocol to fall back to.
 * **Do not trust one relay.** With several relays, compare log heads; seed a relay that is behind (`POST /log` with `entries[]`);
   report a fork. Seed mode needs the caller to be a member in the state the batch ENDS in, so a device that joined after the
   first 64 log entries cannot seed an empty relay (a 5-year-old group at one rotation per 30 days); an older member can.
@@ -198,9 +201,8 @@ Because the code is not the group key, a photo of the code is only useful within
 
 ### 9.1 Clarifications (agreed between the desktop and Android implementations)
 
-* **Pairing codes.** `pcsync1:`/`pcsync2:` prefixes are accepted by every UI. 24 bare words are ambiguous (a v1 group secret and a v2
-  pairing secret look alike), so the client looks up the offer mailbox (`/v2/pair/{pid}/offer`) on its enabled relays: found means v2,
-  not found means "expired / unknown" for `pcsync2:` and a legacy v1 join for bare words or `pcsync1:` only if the relay still has `v1: readwrite`.
+* **Pairing codes.** The one-time pairing code is the `pcsync2:` form (QR) or its 24 words. The client looks up the offer mailbox
+  (`/v2/pair/{pid}/offer`) on its enabled relays; not found means "expired / unknown".
 * **`409 stale_epoch`.** The client fetches the log first. Then EITHER re-seals the queued items for the new epoch OR drops the
   old-epoch items and publishes one fresh snapshot of the local document. Never drop without the snapshot. Both converge, because a
   snapshot is the whole document.
@@ -234,29 +236,22 @@ write, the bucketed size (4 KiB ... 1 MiB), which member device (random per-grou
 (not stored). Not visible: titles, content, device names, identities across groups, the pairing secret.
 Mitigation: batch writes (clients delay and coalesce uploads, default 1-5 s random), padding, and per-group device keys. See SECURITY.md.
 
-## 12. Deployment and v1 retirement
+## 12. Deployment and retired protocol
 
-The relay serves v1 and v2 side by side. v1 (single shared group secret, unauthenticated reads) is the weak design this protocol
-replaces; `V1_MODE` controls it:
+The relay speaks protocol 2 only. The earlier protocol (a single shared group secret with unauthenticated reads) has been removed from the
+relay and from the apps: every `/v1/*` path answers `404`, and there are no `V1_*` settings. Settings: `RETENTION_DAYS_V2` (default 90).
 
-| `V1_MODE` | v1 reads | v1 writes | v1 group delete |
-|---|---|---|---|
-| `readwrite` | yes | yes | yes |
-| `readonly` (**default**) | yes until `V1_READONLY_UNTIL` (default 2027-02-01T00:00:00Z) | **503 `v1_read_only` + `Retry-After: 900`** (after `V1_READONLY_UNTIL`: 410 `v1_retired`) | **not allowed** (same 503) |
-| `off` | no | no | no |
-
-Effect on existing apps: any v1-only client (Android 1.7.0 and 1.8.0 as shipped, desktop builds before this change) can no
-longer push when the relay is in `readonly` mode; it must update to a v2 client.
-
-**Why 503 and not 410.** A v1 write refused in `readonly` mode is *temporary from the client's point of view*: the user's edit is
-still valid and must reach the other devices after the client upgrades. Measured with the real Android 1.7.0 client code and a test probe: on 503 and 429 the client keeps its queue and retries later; on 410, 400, or a 200 it does not
-understand it **drops the outgoing batch** (it records `lastError` and shows pending 0), so the other devices never receive the edit
-until some later snapshot. A 410 would therefore cause silent divergence. `readonly` v1 writes (POST, and DELETE of a v1 group)
-get `503 {"error":"v1_read_only"}` with `Retry-After: 900`. 410 `v1_retired` is used only when v1 is finished (`off`, or past
-`V1_READONLY_UNTIL`), where dropping is no longer a regression. **Client rule:** a v1 client that receives 503 `v1_read_only` (or
-410) on a write MUST keep its queue, MUST NOT count the batch as delivered, SHOULD back off for at least `Retry-After`, and SHOULD
-show "update required" and offer the v2 upgrade; all local data stays intact. v2-capable clients (desktop, Android 1.9.0) do this. Roll-out order: (1) ship v2 clients, (2) deploy the relay with `V1_MODE=readwrite`, (3) when clients have upgraded
-switch to `readonly`, (4) `off`.
+* **Durable Object migration.** Relay 1.2.0 deletes the Durable Object class that held old-protocol groups (`deleted_classes = ["GroupDO"]`,
+  migration tag `v3`, appended after `v1` and `v2` in `wrangler.toml`). A fresh deployment runs the three migrations in order and ends with
+  the v2 classes only. An existing 1.0.x/1.1.x deployment is at tag `v2` and runs only `v3`; the old-protocol data on it is deleted
+  irreversibly, v2 groups are unaffected. Never edit or reorder existing migration tags.
+* **Updating.** `UPDATE.md` in the public relay repository describes how a user updates their own relay. `MIN_RELAY_VERSION` stays 1.0.0 (a
+  1.0.x relay still speaks protocol 2); `LATEST_RELAY_VERSION` is 1.2.0 and triggers the "update available" note.
+* **Probing.** Apps probe `GET /v2/health` (the relay also answers `/`). A client that still probes `/v1/health` (older Android builds) gets
+  `404` from a 1.2.0 relay until it is updated.
+* **Client states.** A device whose stored sync group is of the retired protocol, or points at an address the app no longer allows, does not
+  sync: the app clears that sync state and its secrets locally, makes no network call, leaves the calendar and diary untouched, and shows once:
+  "Your previous sync server has been retired. Set up your own sync server to keep your devices in sync. Your calendar and diary on this device are safe."
 
 ## 13. Test vectors
 

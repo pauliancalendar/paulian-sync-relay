@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { MemoryGroupStore, MemoryPairStore, handlePair, retentionAction, v1Allowed, LIMITS2, RELAY_VERSION, healthResponse2 } from '../src/core2';
+import { MemoryGroupStore, MemoryPairStore, handlePair, retentionAction, LIMITS2, RELAY_VERSION, healthResponse2 } from '../src/core2';
 import { Kind, MIN_BUCKET, bucketFor, isBucketSize, padInner, unpadInner, InnerType, ENVELOPE_OVERHEAD, MAX_PAYLOAD, canonicalQuery, parseAuth } from '../src/proto2';
 
 const row = (day: number, kind: number, i: number) => ({ device: 'd', epoch: 0, index: i, kind, day, blob: new Uint8Array(4096) });
@@ -32,18 +32,6 @@ describe('retention', () => {
     expect(s.logLength()).toBe(0);
   });
   it('default is 90 days', () => expect(LIMITS2.retentionDays).toBe(90));
-});
-
-describe('v1 gate', () => {
-  const now = Date.parse('2026-12-01T00:00:00Z');
-  it('readwrite allows everything', () => expect(v1Allowed('readwrite', undefined, 'POST', now).ok).toBe(true));
-  it('readonly allows reads until the date and never writes', () => {
-    expect(v1Allowed('readonly', '2027-02-01T00:00:00Z', 'GET', now).ok).toBe(true);
-    expect(v1Allowed('readonly', '2027-02-01T00:00:00Z', 'POST', now)).toEqual({ ok: false, code: 'v1_read_only', status: 503, retryAfter: 900 });
-    expect(v1Allowed('readonly', '2027-02-01T00:00:00Z', 'DELETE', now)).toEqual({ ok: false, code: 'v1_read_only', status: 503, retryAfter: 900 });
-    expect(v1Allowed('readonly', '2026-11-01T00:00:00Z', 'GET', now)).toEqual({ ok: false, code: 'v1_retired', status: 410 });
-  });
-  it('off refuses everything', () => expect(v1Allowed('off', undefined, 'GET', now).ok).toBe(false));
 });
 
 describe('padding and framing', () => {
@@ -88,6 +76,6 @@ describe('relay version', () => {
     expect(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8')).version).toBe(RELAY_VERSION);
   });
   it('health reports relayVersion next to protocol', async () => {
-    expect(await healthResponse2('cloudflare-worker', 'off').json()).toMatchObject({ ok: true, service: 'paulian-sync-relay', relayVersion: RELAY_VERSION, protocol: 2, versions: [2] });
+    expect(await healthResponse2('cloudflare-worker').json()).toMatchObject({ ok: true, service: 'paulian-sync-relay', relayVersion: RELAY_VERSION, protocol: 2, versions: [2] });
   });
 });

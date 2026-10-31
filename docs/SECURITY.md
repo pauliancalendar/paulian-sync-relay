@@ -20,7 +20,7 @@ denial of service by the relay.
 
 ## 2. The four reported weaknesses and what fixes them
 
-### 1. Unauthenticated relay reads (v1: knowing the group id was enough to download all ciphertext)
+### 1. Unauthenticated relay reads (the earlier, now removed protocol: knowing the group id was enough to download all ciphertext)
 * The relay-facing group id is derived from a random `groupRoot` that only members hold (`HKDF`, not a hash of a public key).
 * **Every** request and the WebSocket open must be signed by a device that is in the verified membership log; timestamp +/- 5 min,
   single-use nonce, body hash in the signed string. Non-members, unknown groups and removed devices all receive the same `401`.
@@ -34,7 +34,7 @@ denial of service by the relay.
 * Timing: no timestamps in envelopes or log entries beyond a **day** (floored to 86 400 s); clients batch and delay uploads by a random 1-5 s.
 * Device identity: keys and device ids are per group, so devices cannot be linked across groups; device names are only inside encrypted
   pairing messages; the relay sees random ids.
-* Group longevity: v2 groups are deleted after 90 days idle (v1: 400) and history covered by a snapshot is pruned after 90 days.
+* Group longevity: v2 groups are deleted after 90 days idle and history covered by a snapshot is pruned after 90 days.
 * Members can add several relays so no single operator sees everything.
 * **Still visible** (honest list): the group id, member count, the day of each membership change, the time of each write, which
   (random) device id wrote, the coarse size bucket, and the client IP at the network level. Padding costs bandwidth: a tiny change uploads 4 KiB.
@@ -62,7 +62,7 @@ denial of service by the relay.
   next rotation), and a new device cannot decrypt older epochs.
 * Rotation happens on removal, on demand ("Rotate keys"), when a member leaves without deleting, and automatically after 30 days.
 * Revocation is cryptographic and enforced by the relay: a removed device's signed requests are refused and its socket is closed.
-* There is no long-lived group key that decrypts everything (v1 had one secret S that decrypted all history and all future data).
+* There is no long-lived group key that decrypts everything (the removed earlier protocol had one secret S that decrypted all history and all future data).
 
 ## 3. Implementation notes
 
@@ -77,7 +77,7 @@ denial of service by the relay.
 * The device keys `{groupRoot, edSeed, xSk}` live in the OS keychain (macOS Keychain / Windows Credential Manager) under
   `paulian.sync-v2.keys.v1`; the log, chains and outbox are in a file sealed (XChaCha20-Poly1305) with a different keychain key.
   Keychain names are allow-listed in Rust; sync files have fixed names and a 64 MiB cap and atomic writes.
-* Fail closed: any parse/verification error rejects the item; unknown protocol versions are refused; no silent downgrade to v1.
+* Fail closed: any parse/verification error rejects the item; unknown protocol versions are refused; there is no older protocol to fall back to.
 
 ## 4. Device compromise: what an attacker gets
 
@@ -101,8 +101,8 @@ sync with "delete from relays".
    neither helps while the attacker is a member that nobody has removed. Automatic rotation is only every 30 days.
 4. **Relay availability:** a relay can refuse service, delay (detected as a gap only later), or ignore deletes. A removal made while
    the relay is down needs the user's *Remove anyway* and is not effective until the relay is reachable (the relay can delay revocation).
-5. **v1 groups are still weak** until upgraded (`Upgrade security` in the app); the relay in `readonly` mode freezes them and clients
-   cannot delete a v1 group while it is read-only. Read-only v1 writes get a retryable 503 (not 410) so a v1 client keeps its queued edits instead of dropping them.
+5. **The earlier protocol is gone.** Relay 1.2.0 and current apps no longer speak it. Data an older relay still holds in the old format is
+   deleted when its owner updates to relay 1.2.0 (Durable Object migration `v3`); v2 groups are unaffected.
 6. **Metadata** listed in section 2/2 remains; the relay (and Cloudflare) see IPs, write timing, member count and size buckets.
 7. **No recovery phrase in v2.** Losing every device loses the group (the encrypted backup file remains the way to keep data).
 8. **Outbox plaintext:** queued changes are sealed per change, but the sealed sync file contains the outbox; compromise of file + keychain exposes it.

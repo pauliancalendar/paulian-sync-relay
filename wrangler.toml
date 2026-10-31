@@ -9,11 +9,7 @@ compatibility_date = "2026-10-01"
 workers_dev = true
 
 # Free plan: Durable Objects must use the SQLite storage backend (the migrations below do that).
-[[durable_objects.bindings]]
-name = "GROUPS"
-class_name = "GroupDO"
-
-# v2: one Durable Object per sync group, plus a short-lived pairing mailbox per pairing id.
+# One Durable Object per sync group, plus a short-lived pairing mailbox per pairing id.
 [[durable_objects.bindings]]
 name = "GROUPS_V2"
 class_name = "GroupV2DO"
@@ -22,6 +18,11 @@ class_name = "GroupV2DO"
 name = "PAIRS"
 class_name = "PairDO"
 
+# Durable Object migrations: an ordered history. Cloudflare remembers the last tag a Worker has applied and runs only the
+# entries after it, so NEVER edit, remove or reorder an existing entry; only append new ones.
+#   - a NEW relay applies all three entries in order and ends with GroupV2DO and PairDO (GroupDO is created and removed again);
+#   - a relay deployed from version 1.0.x / 1.1.x (tag "v2") applies only "v3", which deletes the old, unused GroupDO
+#     (the old protocol's data) and leaves your sync groups (GroupV2DO) and the pairing mailbox (PairDO) untouched.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GroupDO"]
@@ -30,6 +31,10 @@ new_sqlite_classes = ["GroupDO"]
 tag = "v2"
 new_sqlite_classes = ["GroupV2DO", "PairDO"]
 
+[[migrations]]
+tag = "v3"
+deleted_classes = ["GroupDO"]
+
 # Per-IP rate limit in front of the per-group limits (Workers Rate Limiting API). Needs no setup.
 [[ratelimits]]
 name = "IP_LIMITER"
@@ -37,13 +42,8 @@ namespace_id = "1001"
 simple = { limit = 300, period = 60 }
 
 [vars]
-# Delete a group's data after this many days without any sync activity.
-RETENTION_DAYS = "90"
-# Protocol v2 (the only protocol new relays need): inactivity retention and history pruning age, in days.
+# Delete a group's data after this many days without any sync activity (and prune snapshot-covered history of that age).
 RETENTION_DAYS_V2 = "90"
-# Legacy v1 is OFF for new relays. Do not change this.
-V1_MODE = "off"
-V1_READONLY_UNTIL = "2099-01-01T00:00:00Z"
 
 [observability]
 enabled = false   # do not keep request logs (privacy)

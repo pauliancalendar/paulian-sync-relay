@@ -37,14 +37,23 @@ export function relayV2Suite(name: string, getBase: () => string) {
       expect(await r.json()).toMatchObject({ ok: true, protocol: 2 });
     });
 
-    it('health carries the Paulian relay signature the apps check, on /v1/health too', async () => {
-      for (const p of ['/v1/health', '/v2/health']) {
+    it('health carries the Paulian relay signature the apps check, on /v2/health and /', async () => {
+      for (const p of ['/v2/health', '/']) {
         const j = await (await fetch(base + p)).json() as Record<string, unknown>;
         expect(j.service).toBe('paulian-sync-relay');
         expect(j.protocol).toBe(2);
+        expect(j.versions).toEqual([2]);
         expect(j.relayVersion).toMatch(/^\d+\.\d+\.\d+$/);
         expect(typeof j.impl).toBe('string');
+        expect('v1' in j).toBe(false);
       }
+    });
+
+    it('the old protocol (v1) is gone: its paths are plain 404s', async () => {
+      const gid = 'a'.repeat(64);
+      expect((await fetch(base + '/v1/health')).status).toBe(404);
+      expect((await fetch(`${base}/v1/groups/${gid}/changes?since=0`)).status).toBe(404);
+      expect((await fetch(`${base}/v1/groups/${gid}/changes`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(404);
     });
 
     it('creates a group, pushes, and reads with signed requests', async () => {

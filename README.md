@@ -17,7 +17,7 @@ Step-by-step guide with troubleshooting: **[DEPLOY.md](DEPLOY.md)**. Updating a 
 
 * Cloudflare Worker (`src/index.ts`) plus Durable Objects (one per sync group, SQLite storage, WebSocket hibernation).
 * `wrangler.toml`: the deploy template. No account name, no route and no domain, nothing to edit.
-  `V1_MODE=off` (old protocol disabled) and `RETENTION_DAYS_V2=90`.
+  `RETENTION_DAYS_V2=90`.
 * No secrets and no environment variables you must fill in.
 * `docs/PROTOCOL_V2.md` (wire protocol) and `docs/SECURITY.md` (threat model).
 
@@ -52,7 +52,7 @@ sizes and times. It sees your devices' IP addresses like any web server. Workers
 
 ## Health check
 
-`GET /v1/health` returns `{"ok":true,"service":"paulian-sync-relay","relayVersion":"1.1.0","protocol":2,"impl":"cloudflare-worker",...}`.
+`GET /v2/health` returns `{"ok":true,"service":"paulian-sync-relay","relayVersion":"1.2.0","protocol":2,"impl":"cloudflare-worker",...}`.
 The apps use it to check that an address you paste is a Paulian relay, and `relayVersion` to tell you when an update is available.
 
 ## License

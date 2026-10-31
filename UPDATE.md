@@ -35,7 +35,8 @@ account. Cloudflare rebuilds and redeploys your server every time that copy chan
    deployment as it finishes. Then open `https://<your address>/v2/health` again: `relayVersion` should show the new number.
 
 Do **not** rename your server and do **not** delete it. A server with a different name is a new, empty server, and your
-devices would have to be set up on it again. Keep the same name (normally `paulian-sync-relay`).
+devices would have to be set up on it again. Keep the same name (normally `paulian-sync-server`; a server set up from an older version of this project may be called `paulian-sync-relay`).
+The name is the `name = "…"` line at the top of `wrangler.toml`. If your server has the older name, change that line back to it after you copy the new file in, so the update goes to your existing server.
 
 ## If you are comfortable with a command line
 
@@ -44,7 +45,7 @@ git clone https://github.com/pauliancalendar/paulian-sync-relay
 cd paulian-sync-relay
 npm ci
 npx wrangler login
-npx wrangler deploy --name paulian-sync-relay   # use the exact name of your existing server
+npx wrangler deploy --name paulian-sync-server   # use the exact name of your existing server (an older one may be paulian-sync-relay)
 ```
 
 Using the same server name updates your existing server and keeps its data.

@@ -8,10 +8,10 @@ you keep a copy you control). No credit card is needed for the Workers Free plan
 1. **Press "Deploy to Cloudflare"** in the README (or in the app: Sync → Set up your relay → *Deploy my relay on Cloudflare*).
 2. **Sign in to Cloudflare**, or create a free account.
 3. **Connect GitHub or GitLab** when Cloudflare asks. It creates your own copy of this project there.
-4. **Leave the defaults** (project name `paulian-sync-relay`, no variables or secrets to fill in) and press **Deploy**.
+4. **Leave the defaults** (project name `paulian-sync-server`, no variables or secrets to fill in) and press **Deploy**.
    Wait until the build finishes.
 5. **First time on Cloudflare only:** if you are asked to choose a *workers.dev subdomain*, pick any name. Your relay's
-   address will be `https://paulian-sync-relay.<your-subdomain>.workers.dev`.
+   address will be `https://paulian-sync-server.<your-subdomain>.workers.dev`.
 6. **Copy your relay address.** It is shown when the deploy finishes. Later, find it in the Cloudflare dashboard:
    *Workers & Pages* → your Worker → *Settings* → *Domains & Routes* (the `workers.dev` entry). The wording of Cloudflare's pages can change slightly.
 7. **Check it:** open `https://<your address>/v2/health` in a browser. You should see text containing
@@ -25,7 +25,7 @@ you keep a copy you control). No credit card is needed for the Workers Free plan
 | Problem | What to do |
 |---|---|
 | The app says "That address did not answer" | Open `https://<address>/v2/health` in a browser. If that works, check your internet connection and any VPN or firewall. |
-| The app says "This is not a Paulian relay" | The address is some other Worker. Copy the address of the `paulian-sync-relay` Worker. |
+| The app says "This is not a Paulian relay" | The address is some other Worker. Copy the address of the `paulian-sync-server` Worker. |
 | The app says it must end in `.workers.dev` | Use the address Cloudflare gave you. Custom domains are not supported yet. |
 | Build failed on Cloudflare | Open the build log in the dashboard. Retry the deploy. Make sure the Durable Objects feature is allowed on your plan (Workers Free supports the SQLite kind used here). |
 | I deployed twice and have two relays | Use one. Delete the other in the dashboard (*Workers & Pages* → the Worker → *Settings* → *Delete*). |

@@ -1,6 +1,6 @@
 # Paulian Sync relay: the template that "Deploy to Cloudflare" uses. Works on the Workers FREE plan.
 # No account name, route or domain in here: your relay lives at https://<worker-name>.<your-subdomain>.workers.dev
-name = "paulian-sync-relay"
+name = "paulian-sync-server"
 main = "src/index.ts"
 # Set this to a recent date when you update the project.
 compatibility_date = "2026-10-01"

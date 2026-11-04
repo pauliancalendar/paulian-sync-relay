@@ -221,6 +221,38 @@ Because the code is not the group key, a photo of the code is only useful within
 * **Compaction** is optional for clients: snapshots are published on join, rotation and stale epoch, and the relay prunes snapshot-covered history
   older than 90 days. A client that gets `507` (quota) SHOULD publish a snapshot and call `POST /compact`.
 
+### 9.2 The event record (what a device mirrors)
+
+The document is a CRDT; the relay only carries opaque envelopes. Every event in `events` is a map of fields:
+
+| field | meaning |
+|---|---|
+| `title`, `description`, `date`, `start_time`, `end_time`, `color`, `is_all_day`, `created_at`, `updated_at` | the event itself |
+| `recurrence` | the repeat rule WITHOUT its exception dates, e.g. `{"freq":"weekly","interval":1,"calendar":"gregorian"}`; absent or null = a one-off event |
+| `exdates` | a nested map, one key per date of the series that is skipped, value `true` |
+| `links` | a nested map, one key per link, the key being the link's own canonical JSON (`{"kind":"location","text":"Community hall"}`) |
+| `time_basis` | `"jerusalem"` when the event's clock times are Jerusalem times, null/absent = local (Gregorian) |
+
+The rule is split in two on purpose: two devices that skip two different dates of the same series write two
+different keys, so both skips survive. Only the same date being skipped on one device and un-skipped on another
+is a real conflict, resolved deterministically. A push carries the exception dates as a diff (`exdates` = dates
+to add, `unexdates` = dates to drop), so a device can never undo a skip it never saw. `links` works exactly the
+same way, keyed by the link's own canonical JSON: two devices adding different links to one event both keep
+theirs, and editing a link is a remove of the old key plus an add of the new one.
+
+Rules every implementation follows:
+* `freq` is `daily|weekly|monthly|yearly`; `interval` is 1..999; `calendar` is `gregorian|paulian` (Paulian only for
+  monthly/yearly); `until` and `count` cannot both be set; at most 1000 exception dates; the rule string is at most
+  32 768 bytes. A rule that does not parse counts as "no repeat".
+* The canonical form is fixed (`freq`, `interval`, `calendar`, then `until`/`count` only when set). Key order in
+  incoming JSON never counts as a change.
+* `links` are at most 5 per event: label 80 chars, location text 300, url 2000, http/https only, no credentials;
+  a link that fails validation is dropped rather than stored. `time_basis` is a single value, so it merges as a field.
+* A build that does not know these fields ignores them and never writes them, so a series, a link or a Jerusalem
+  clock created on a current build still survives on an older device instead of being lost.
+* Occurrences are not stored: each device expands the rule for the dates it displays. A Paulian-calendar rule
+  depends on the calendar table that device has; if it cannot resolve a date it falls back to the Gregorian interval.
+
 ## 10. Retention and relay-side policy (fixes: relay trust for retention)
 
 * v2 groups with no push for 90 days are deleted (daily alarm). Within a group, history older than 90 days **that is covered by a

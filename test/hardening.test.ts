@@ -37,9 +37,9 @@ describe('optional access key', () => {
     expect(await accessSecretOk(req, undefined)).toBe(true);
     expect(await accessSecretOk(req, '')).toBe(true);
   });
-  it('accepts the header or the WebSocket query and rejects anything else', async () => {
+  it('accepts only the header and never a query parameter', async () => {
     expect(await accessSecretOk(new Request('https://x/v2/health', { headers: { [RELAY_ACCESS_HEADER]: secret } }), secret)).toBe(true);
-    expect(await accessSecretOk(new Request('https://x/v2/g/aa/ws?since=0&rk=' + encodeURIComponent(secret)), secret)).toBe(true);
+    expect(await accessSecretOk(new Request('https://x/v2/g/aa/ws?since=0&rk=' + encodeURIComponent(secret)), secret)).toBe(false);
     expect(await accessSecretOk(new Request('https://x/v2/health'), secret)).toBe(false);
     expect(await accessSecretOk(new Request('https://x/v2/health', { headers: { [RELAY_ACCESS_HEADER]: 'nope' } }), secret)).toBe(false);
   });

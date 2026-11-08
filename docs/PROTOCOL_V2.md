@@ -60,11 +60,12 @@ signature     = Ed25519(edSk, UTF-8 of the string)
   `401 unauthorized` (the relay never confirms that a group exists). A stale timestamp gives `401 stale_timestamp` and a repeated
   nonce `401 replayed_request` (these two reveal nothing about membership). A removed device therefore just sees 401s and
   concludes `access_lost` after 3 in a row; an already-open WebSocket of a removed device is closed with 4403.
-* WebSocket `/v2/g/<gid>/ws?since=N`: if the request includes `Authorization`, the relay verifies it before accepting the
-  upgrade and otherwise returns the same `401 unauthorized`. Browsers cannot set that header, so desktop apps still send a
-  first frame `{"type":"auth","d":..,"t":..,"n":..,"s":..}` within 10 s, signed with method `WS`,
-  path `/v2/g/<gid>/ws`, query `?since=N` (canonicalised) and an empty body. A socket that is waiting for that frame must
-  not persist storage or set an alarm. The server then replays everything after `since` as
+* WebSocket `/v2/g/<gid>/ws?since=N`: if the request includes `Authorization`, the relay verifies it (and the access key
+  header, when configured) before accepting the upgrade and otherwise returns the same `401 unauthorized`. Browsers cannot
+  set custom headers, so desktop apps send a first frame `{"type":"auth","d":..,"t":..,"n":..,"s":..,"k":..}` within 10 s,
+  signed with method `WS`, path `/v2/g/<gid>/ws`, query `?since=N` (canonicalised) and an empty body. `k` is the optional
+  access key when `RELAY_ACCESS_SECRET` is set; it is not part of the signed string and must never appear in the URL.
+  Until that frame is accepted the relay persists no storage, sets no alarm and sends nothing. The server then replays everything after `since` as
   `{"type":"changes","changes":[{"seq","blob"}]}` frames, sends `{"type":"ready","latest","epoch","head","logLength"}`, and pushes
   further `changes` frames live (a client that sees `logLength` grow pulls the log over HTTP). `ping` is answered with `pong`.
   Close codes: 4401 auth (bad frame, bad signature, 10 s timeout), 4403 removed, 4429 rate limited, 4000 group deleted.
@@ -77,12 +78,13 @@ signature     = Ed25519(edSk, UTF-8 of the string)
   (dismissal remembered per latest version); below `MIN_RELAY_VERSION` -> sync is paused with a clear message until the relay is updated
   (local data untouched). An unreadable answer keeps the previous verdict. Update guide: `UPDATE.md` in the public relay repository.
 
-From relay 1.3.0, if the Worker secret `RELAY_ACCESS_SECRET` is set, every request except `OPTIONS` and the pairing
-mailbox (`/v2/pair/...`) must also send that value as the header `x-paulian-relay-key` (or, on a WebSocket URL that
-cannot carry custom headers, as the `rk` query parameter, which is not part of the signed query). A missing or wrong
-value produces the same generic `401 unauthorized`. Pairing is exempt so a new device can fetch the encrypted offer,
-which itself carries the access key; after that the new device sends the key like any other member. A relay with no
-secret configured ignores the header and behaves as before.
+From relay 1.3.0, if the Worker secret `RELAY_ACCESS_SECRET` is set, every request except `OPTIONS` must also send that
+value as the header `x-paulian-relay-key`. WebSocket upgrades are the exception: browsers cannot set custom headers, so
+the same value travels as `k` on the first auth frame (see above), never as a query parameter. A missing or wrong value
+produces the same generic `401 unauthorized`. Pairing (`/v2/pair/...`) does not use the access key — a new device learns
+it from the encrypted offer — but when the secret is configured every pairing request must prove knowledge of the
+pairing secret instead (section 8). A relay with no secret configured ignores the header and the pairing-proof headers
+and behaves as before.
 
 An unknown group id is not turned into a Durable Object unless the request is a verified genesis or a verified seed of
 the membership log (`POST /v2/g/{gid}/log`). Failed probes leave no tables. Empty leftover objects are deleted by the
@@ -100,8 +102,8 @@ limits.
 | `POST /v2/g/{gid}/changes` | `{changes:[b64u...]}` <= 100 envelopes. Each: size <= 1 MiB, `device == caller`, `epoch == current epoch` (else `409 {error:"stale_epoch", epoch, logLength}`), valid signature (`403 bad_signature`) | `{results:[{seq, duplicate?}], cursor, count}` |
 | `POST /v2/g/{gid}/compact` | `{upto: seq}`; allowed only when a snapshot envelope newer than `upto` is stored (else `409 no_snapshot`) | `{deleted: n}` |
 | `DELETE /v2/g/{gid}` | | `{deleted:true}`; all data and the log are removed, sockets closed with 4000 |
-| `PUT /v2/pair/{pid}/{offer|join|welcome}` | `{blob: b64u}` (16..2048 bytes), unauthenticated, write-once (`409 slot_taken`), 10 min TTL | `{ok:true}` |
-| `GET /v2/pair/{pid}/{slot}` | | `{blob}` or `404 empty` |
+| `PUT /v2/pair/{pid}/{offer|join|welcome}` | `{blob: b64u}` (16..2048 bytes), write-once (`409 slot_taken`), 10 min TTL. When `RELAY_ACCESS_SECRET` is set, a pairing-secret proof is required (section 8); otherwise unauthenticated as before | `{ok:true}` |
+| `GET /v2/pair/{pid}/{slot}` | same pairing-secret proof rule | `{blob}` or `404 empty` (or `401 unauthorized` when proof is required and missing/wrong) |
 
 Other errors: 400 `bad_json`/`bad_entry`/`bad_blob`, 413 (`body_too_large`, `too_many_changes`, `change_too_large`), 429 `rate_limited` (+`retry-after`), 507 `group_quota_exceeded` (64 MiB / 50 000 changes per group).
 The relay validates envelope **structure only** (magic, version, epoch within the log, device id is a member, power-of-two size,
@@ -188,10 +190,21 @@ Binding the epoch's start hash into the AAD makes a message undecryptable under 
 
 1. Existing device A shows a one-time **pairing secret** `ps` (32 random bytes) as 24 words or `pcsync2:`+b64u QR. `ps` is **not**
    a group key. `pid = HKDF(ps, "paulian-sync/v2/pair-id", 16)` (mailbox name), `mk = HKDF(ps, "paulian-sync/v2/pair-key", 32)`.
+   A third derived value, `pairAuthSeed = HKDF(ps, "paulian-sync/v2/pair-auth", 32)`, is the seed of an Ed25519 key pair used
+   only to prove knowledge of `ps` to the relay. The relay never sees `ps` or the private key.
 2. A writes slot `offer` to `PUT /v2/pair/{pid hex}/offer` on every enabled relay (it only needs one to succeed): `{v:2, gid, relays:[...], relayKeys?: {url: accessKey}}`, sealed as
    `nonce24 || AEAD(mk, nonce, json, aad = "paulian-sync/v2/pair/offer" || pid)`. `relays` stays an array of URL strings so older
    readers still understand the offer. `relayKeys` is optional and ignored by older apps; a 1.3.0 reader copies any keys
    it recognizes onto the matching relay URLs. The `welcome` slot may repeat `relayKeys` as a backup.
+   When `RELAY_ACCESS_SECRET` is set, every pairing request (the first `offer` PUT and every later GET/PUT) carries
+   `x-paulian-pair-ts` (unix ms), `x-paulian-pair-sig` (Ed25519 of `METHOD LF path LF ts LF sha256hex(body)`,
+   signed with the key pair from `pairAuthSeed`) and, on at least the first `offer` PUT, `x-paulian-pair-pk`
+   (the corresponding public key). The relay verifies the first offer against that public key and stores the public
+   key write-once as the mailbox verifier; later requests must verify under it. The timestamp must be within +/- 5
+   minutes. Missing, stale, replayed-after-expiry or wrong proofs all give the same generic `401 unauthorized`.
+   A relay with no access key ignores these headers, so a new app can still pair with an older relay. An older app
+   that does not send them cannot pair with a keyed 1.3.0 relay (it also could not sync with one, because it does
+   not send the access key).
 3. New device B scans/types the code, reads `offer`, generates its fresh group keys and writes `join`:
    `{v:2, ed:hex, x:hex, name}`: **lowercase hex, 64 chars each, not base64url** (same sealing, slot name `join`). A reader may also accept b64u (older Mac/Windows desktop builds wrote it).
 4. Both screens show a **6-digit SAS**: first 4 bytes of `SHA-256("paulian-sync/v2/sas" || gid || joinerEd || joinerX || pid)`

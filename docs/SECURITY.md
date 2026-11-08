@@ -31,7 +31,9 @@ denial of service by the relay.
   who only knows or guesses the URL from using the relay or reading its health page. It is not a second encryption key:
   calendar data is still encrypted on the devices. A relay with no key configured keeps the previous behaviour.
 * Unknown group ids do not create empty Durable Object storage. A guessed address can still reach the Worker (it is a
-  public HTTPS URL) and the pairing mailbox (the mailbox id is 128 random bits from the pairing code).
+  public HTTPS URL). The pairing mailbox id is 128 random bits from the pairing code; when an access key is configured,
+  every pairing request must also prove knowledge of that code (an Ed25519 key derived from it), so knowing or logging
+  the mailbox id is not enough to read or write the slots.
 * Tests: relay API suite (unauthenticated, wrong key, replayed nonce, skewed clock, removed member, tampered body); client tests for 401 handling.
 
 ### 2. Metadata exposure
@@ -117,11 +119,12 @@ sync with "delete from relays".
 11. JavaScript memory is garbage-collected: copies of strings and decrypted data cannot be guaranteed wiped.
 12. The pairing code is secret for 10 minutes; a person who gets it within that window and a matching 6-digit code can be approved by a distracted user. Compare the digits.
 13. The relay URL is reachable on the public internet, random name or not. The access key hides the health page and
-    blocks group requests from strangers, but pairing slots do not require that key (so a joining device can read the
-    offer that carries it). The pairing id is 128 random bits; empty pairing objects are not persisted.
-14. Desktop WebSockets cannot send custom headers, so the access key is also accepted as the `rk` query parameter on
-    the WebSocket URL. Request logs are off by default; if someone later turned them on, that query would appear there.
-    Prefer the `x-paulian-relay-key` header on ordinary HTTP requests.
+    blocks group requests from strangers. Pairing slots do not use that key (so a joining device can read the offer
+    that carries it) but, when the key is configured, they do require a proof derived from the pairing secret. The
+    pairing id is 128 random bits; empty pairing objects are not persisted.
+14. Desktop WebSockets cannot send custom headers, so the access key travels in the first auth frame (`k`) after the
+    socket opens, never in the URL. Until that frame is accepted the relay stores nothing and sends nothing. Request
+    logs are off by default; even if they were turned on, they would not contain the access key or a ticket.
 15. A random Worker name stops casual scanning of a well-known name; it is not a secret. The access key and the
     membership signatures are what stop misuse.
 

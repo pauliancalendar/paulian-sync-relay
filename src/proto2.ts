@@ -290,3 +290,14 @@ export function unpadInner(inner: Uint8Array): { type: InnerType; payload: Uint8
 // ---------- pairing ----------
 export const PAIR_SLOTS = ['offer', 'join', 'welcome'] as const;
 export type PairSlot = (typeof PAIR_SLOTS)[number];
+
+/** HKDF info for the pairing-request signing seed: HKDF(ps, PAIR_AUTH_INFO, 32) then Ed25519 from that seed. */
+export const PAIR_AUTH_INFO = 'paulian-sync/v2/pair-auth';
+export const PAIR_AUTH_TS_HEADER = 'x-paulian-pair-ts';
+export const PAIR_AUTH_SIG_HEADER = 'x-paulian-pair-sig';
+export const PAIR_AUTH_PK_HEADER = 'x-paulian-pair-pk';
+
+/** Bytes signed for a pairing request: HTTP method, path, timestamp (ms) and hex(SHA-256(body)). */
+export function pairAuthMessage(method: string, path: string, ts: number, bodyHashHex: string): Uint8Array {
+  return utf8(`${method}\n${path}\n${ts}\n${bodyHashHex}`);
+}

@@ -13,8 +13,9 @@
  *     requests are indistinguishable (401).
  */
 import {
-  Crypto2, GroupState, Kind, LogType, MAX_BUCKET, REQ_SKEW_MS, applyLogEntry, b64uDecode, b64uEncode, canonicalRequest,
-  currentEpoch, emptyState, hex, parseAuth, parseEnvelope, parseLogEntry, unhex, verifyEnvelopeSig, Member, PAIR_SLOTS, PairSlot,
+  Crypto2, GroupState, Kind, LogType, MAX_BUCKET, PAIR_AUTH_PK_HEADER, PAIR_AUTH_SIG_HEADER, PAIR_AUTH_TS_HEADER, REQ_SKEW_MS,
+  applyLogEntry, b64uDecode, b64uEncode, canonicalRequest, currentEpoch, emptyState, eq, hex, pairAuthMessage, parseAuth,
+  parseEnvelope, parseLogEntry, unhex, verifyEnvelopeSig, Member, PAIR_SLOTS, PairSlot,
 } from './proto2';
 import { TokenBucket, json, err, corsHeaders } from './core';
 
@@ -91,7 +92,7 @@ export const webCrypto2: Crypto2 = {
 };
 
 export function corsHeaders2(): Record<string, string> {
-  return { ...corsHeaders(), 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-paulian-relay-key' };
+  return { ...corsHeaders(), 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-paulian-relay-key, x-paulian-pair-ts, x-paulian-pair-sig, x-paulian-pair-pk' };
 }
 const J = (body: unknown, status = 200, extra: Record<string, string> = {}) => json(body, status, { ...corsHeaders2(), ...extra });
 const E = (status: number, code: string, extra: Record<string, string> = {}) => err(status, code, { ...corsHeaders2(), ...extra });
@@ -103,7 +104,7 @@ export const RELAY_SERVICE_ID = 'paulian-sync-relay';
  * The relay software version, "major.minor.patch" (keep equal to package.json "version"). The apps compare it with the newest
  * and the oldest version they know: older than newest -> "an update is available"; older than their minimum -> sync is paused until
  * the relay is updated. Bump it whenever the relay's behaviour changes, and add the entry to UPDATE.md.
- * A relay that reports no `relayVersion` is a 1.0.0 relay (the field was added in 1.1.0). 1.2.0 removed the old protocol (v1). 1.3.0 adds an optional per-relay access key, refuses to persist storage for unknown groups, and rate-limits the public health page.
+ * A relay that reports no `relayVersion` is a 1.0.0 relay (the field was added in 1.1.0). 1.2.0 removed the old protocol (v1). 1.3.0 adds an optional per-relay access key (HTTP header, or the first WebSocket frame; never a URL query), refuses to persist storage for unknown groups, rate-limits the public health page, and — when the access key is set — requires a pairing-secret proof on every pairing request.
  */
 export const RELAY_VERSION = '1.3.0';
 
@@ -111,9 +112,8 @@ export function healthResponse2(impl: string): Response {
   return J({ ok: true, service: RELAY_SERVICE_ID, relayVersion: RELAY_VERSION, protocol: PROTOCOL_VERSION_V2, versions: [2], impl });
 }
 
-/** Header the apps send when the owner set a per-relay access key. Also accepted as the `rk` query on WebSocket URLs (browsers cannot set custom headers on `WebSocket`). */
+/** Header the apps send when the owner set a per-relay access key. WebSockets carry the same value in the first auth frame (`k`), never in the URL. */
 export const RELAY_ACCESS_HEADER = 'x-paulian-relay-key';
-export const RELAY_ACCESS_QUERY = 'rk';
 
 export function configuredAccessSecret(envSecret: string | undefined | null): string | null {
   const s = (envSecret ?? '').trim();
@@ -122,8 +122,7 @@ export function configuredAccessSecret(envSecret: string | undefined | null): st
 
 export function providedAccessSecret(req: Request): string {
   const h = req.headers.get(RELAY_ACCESS_HEADER);
-  if (h && h.trim()) return h.trim();
-  try { return new URL(req.url).searchParams.get(RELAY_ACCESS_QUERY)?.trim() ?? ''; } catch { return ''; }
+  return h && h.trim() ? h.trim() : '';
 }
 
 /** Compare two strings by SHA-256 so a missing or short value takes the same work as a long one. */
@@ -137,10 +136,14 @@ export async function secretsDigestEqual(a: string, b: string): Promise<boolean>
 }
 
 /** When no access key is configured, every request is allowed through (older relays, or a hosted relay that has none). */
-export async function accessSecretOk(req: Request, envSecret: string | undefined | null): Promise<boolean> {
+export async function accessSecretMatches(provided: string, envSecret: string | undefined | null): Promise<boolean> {
   const configured = configuredAccessSecret(envSecret);
   if (!configured) return true;
-  return secretsDigestEqual(providedAccessSecret(req), configured);
+  return secretsDigestEqual((provided ?? '').trim(), configured);
+}
+
+export async function accessSecretOk(req: Request, envSecret: string | undefined | null): Promise<boolean> {
+  return accessSecretMatches(providedAccessSecret(req), envSecret);
 }
 
 export function isPairPath(pathname: string): boolean {
@@ -426,28 +429,90 @@ export interface PairStore {
   put(slot: PairSlot, blob: Uint8Array, at: number): boolean;
   firstAt(): number | null;
   clear(): void;
+  /** Write-once public key bound on the first offer PUT when pairing proof is required. */
+  getVerifier(): Uint8Array | null;
+  setVerifier(pk: Uint8Array): boolean;
+}
+
+function pairProofParts(req: Request): { ts: number; sig: Uint8Array; pk: Uint8Array | null } | null {
+  const tsRaw = req.headers.get(PAIR_AUTH_TS_HEADER);
+  const sigRaw = req.headers.get(PAIR_AUTH_SIG_HEADER);
+  const pkRaw = req.headers.get(PAIR_AUTH_PK_HEADER);
+  if (!tsRaw || !sigRaw) return null;
+  const tsText = tsRaw.trim();
+  if (!/^\d{1,16}$/.test(tsText)) return null;
+  const ts = Number(tsText);
+  if (!Number.isSafeInteger(ts)) return null;
+  const sig = b64uDecode(sigRaw.trim());
+  if (!sig || sig.length !== 64) return null;
+  let pk: Uint8Array | null = null;
+  if (pkRaw && pkRaw.trim()) {
+    pk = b64uDecode(pkRaw.trim());
+    if (!pk || pk.length !== 32) return null;
+  }
+  return { ts, sig, pk };
+}
+
+/**
+ * Verifies a pairing request when `RELAY_ACCESS_SECRET` is configured.
+ * The first PUT of `offer` presents an Ed25519 public key derived from the pairing secret and a signature
+ * over method, path, timestamp and body hash; later requests must verify under that stored public key.
+ * The pairing secret itself never reaches the relay.
+ */
+export async function verifyPairProof(req: Request, body: Uint8Array, store: PairStore, now: number, slot: string, crypto: Crypto2 = webCrypto2): Promise<boolean> {
+  const parts = pairProofParts(req);
+  if (!parts) return false;
+  if (Math.abs(now - parts.ts) > REQ_SKEW_MS) return false;
+  let pathname: string;
+  try { pathname = new URL(req.url).pathname; } catch { return false; }
+  const bodyHash = hex(await crypto.sha256(body));
+  const msg = pairAuthMessage(req.method, pathname, parts.ts, bodyHash);
+  const stored = store.getVerifier();
+  if (!stored) {
+    if (req.method !== 'PUT' || slot !== 'offer' || !parts.pk) return false;
+    return crypto.verify(parts.pk, msg, parts.sig);
+  }
+  if (parts.pk && !eq(parts.pk, stored)) return false;
+  return crypto.verify(stored, msg, parts.sig);
 }
 
 /**
  * One-time pairing mailbox: PUT/GET /v2/pair/{pid}/{offer|join|welcome}. pid is 128 random bits derived from the
  * pairing secret shown as a QR code / 24 words; slots hold ciphertext only, are write-once and expire after 10 min.
+ * When `requireProof` is set (the relay has RELAY_ACCESS_SECRET), every request must prove knowledge of that pairing
+ * secret; a missing or bad proof is the same generic 401 as every other guarded path.
  */
-export async function handlePair(req: Request, slot: string, store: PairStore, now: number): Promise<Response> {
+export async function handlePair(req: Request, slot: string, store: PairStore, now: number, opts: { requireProof?: boolean; crypto?: Crypto2 } = {}): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders2() });
   if (!(PAIR_SLOTS as readonly string[]).includes(slot)) return E(404, 'not_found');
   const first = store.firstAt();
   if (first !== null && now - first > LIMITS2.pairTtlMs) { store.clear(); }
+
+  let body: Uint8Array = new Uint8Array();
+  if (req.method === 'PUT') {
+    const read = await readBody(req, 4096);
+    if (read instanceof Response) return read;
+    body = new Uint8Array(read);
+  }
+
+  if (opts.requireProof) {
+    const ok = await verifyPairProof(req, body, store, now, slot, opts.crypto ?? webCrypto2);
+    if (!ok) return E(401, 'unauthorized');
+  }
+
   if (req.method === 'GET') {
     const v = store.get(slot as PairSlot);
     return v ? J({ blob: b64uEncode(v.blob) }) : E(404, 'empty');
   }
   if (req.method === 'PUT') {
-    const body = await readBody(req, 4096);
-    if (body instanceof Response) return body;
     let blob: Uint8Array | null = null;
     try { const j = JSON.parse(new TextDecoder().decode(body)); blob = typeof j?.blob === 'string' ? b64uDecode(j.blob) : null; } catch { /* */ }
     if (!blob || blob.length < 16 || blob.length > LIMITS2.pairMaxBlob) return E(400, 'bad_blob');
     if (!store.put(slot as PairSlot, blob, now)) return E(409, 'slot_taken');
+    if (opts.requireProof && slot === 'offer' && !store.getVerifier()) {
+      const parts = pairProofParts(req);
+      if (parts?.pk) store.setVerifier(parts.pk);
+    }
     return J({ ok: true });
   }
   return E(405, 'method_not_allowed');
@@ -493,10 +558,13 @@ export class MemoryGroupStore implements GroupStoreV2 {
 
 export class MemoryPairStore implements PairStore {
   private slots = new Map<PairSlot, { blob: Uint8Array; at: number }>();
+  private vk: Uint8Array | null = null;
   get(s: PairSlot) { return this.slots.get(s) ?? null; }
   put(s: PairSlot, blob: Uint8Array, at: number) { if (this.slots.has(s)) return false; this.slots.set(s, { blob, at }); return true; }
   firstAt() { let m: number | null = null; for (const v of this.slots.values()) if (m === null || v.at < m) m = v.at; return m; }
-  clear() { this.slots.clear(); }
+  clear() { this.slots.clear(); this.vk = null; }
+  getVerifier() { return this.vk; }
+  setVerifier(pk: Uint8Array) { if (this.vk) return false; this.vk = pk; return true; }
 }
 
 /** Inactivity retention decision shared by the Durable Object alarm and the self-host timer. */

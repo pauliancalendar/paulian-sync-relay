@@ -6,8 +6,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import { TokenBucket, err } from './core';
 import {
-  ChangeInsert, ChangeRow, GID2_RE, GroupStoreV2, LIMITS2, PID_RE, PairStore, accessSecretOk, authenticate, changesFrame2, corsHeaders2,
-  discardEmptyProbe, handleGroupV2, handlePair, healthResponse2, parsePathV2, retentionAction, verifyCreateGroupRequest, webCrypto2,
+  ChangeInsert, ChangeRow, GID2_RE, GroupStoreV2, LIMITS2, PID_RE, PairStore, accessSecretMatches, accessSecretOk, authenticate,
+  changesFrame2, configuredAccessSecret, corsHeaders2, discardEmptyProbe, handleGroupV2, handlePair, healthResponse2, parsePathV2,
+  retentionAction, verifyCreateGroupRequest, webCrypto2,
 } from './core2';
 import { PairSlot, hex, currentEpoch, type GroupState } from './proto2';
 
@@ -53,9 +54,12 @@ export default {
     }
     const p2 = parsePathV2(url.pathname);
     if (!p2) return err(404, 'not_found', corsHeaders2());
-    // Pairing mailboxes are opened with a 128-bit id from the one-time code, so joining devices can read the
-    // encrypted offer (which itself carries the access key) without already knowing that key.
-    if (p2.kind !== 'pair' && !(await accessSecretOk(req, env.RELAY_ACCESS_SECRET))) return err(401, 'unauthorized', corsHeaders2());
+    // Pairing does not use the access key (the joining device learns it from the encrypted offer). When the key
+    // is configured, pairing instead requires a proof derived from the pairing secret (see handlePair).
+    // WebSocket upgrades also skip the header check: browsers cannot set custom headers, so the key is carried
+    // in the first auth frame. Nothing is stored or sent until that frame is accepted.
+    const isWs = req.headers.get('upgrade')?.toLowerCase() === 'websocket';
+    if (p2.kind !== 'pair' && !isWs && !(await accessSecretOk(req, env.RELAY_ACCESS_SECRET))) return err(401, 'unauthorized', corsHeaders2());
     const lim = await rateLimit(req, env.IP_LIMITER);
     if (lim) return lim;
     if (p2.kind === 'group') {
@@ -212,6 +216,7 @@ export class GroupV2DO extends DurableObject<Env> {
     const sinceN = Number.isSafeInteger(since) && since >= 0 ? since : 0;
     const header = req.headers.get('authorization');
     if (header) {
+      if (!(await accessSecretOk(req, this.env.RELAY_ACCESS_SECRET))) { await this.dropIfEmpty(); return err(401, 'unauthorized', corsHeaders2()); }
       const r = await authenticate({ gid, store: this.store, pushBucket: this.pushBucket, readBucket: this.readBucket, crypto: webCrypto2, broadcast: () => {} },
         { method: 'WS', path: `/v2/g/${gid}/ws`, search: `?since=${sinceN}`, body: new Uint8Array(0), header });
       if (!r.ok) { await this.dropIfEmpty(); return r.res; }
@@ -261,6 +266,8 @@ export class GroupV2DO extends DurableObject<Env> {
     let f: any;
     try { f = JSON.parse(typeof msg === 'string' ? msg : new TextDecoder().decode(msg)); } catch { try { ws.close(4401, 'bad frame'); } catch { /* */ } await this.dropIfEmpty(); return; }
     if (f?.type !== 'auth') { try { ws.close(4401, 'auth required'); } catch { /* */ } await this.dropIfEmpty(); return; }
+    const provided = typeof f.k === 'string' ? f.k : '';
+    if (!(await accessSecretMatches(provided, this.env.RELAY_ACCESS_SECRET))) { try { ws.close(4401, 'unauthorized'); } catch { /* */ } await this.dropIfEmpty(); return; }
     const gid = att.gid;
     const header = `PCS2 d=${f.d},t=${f.t},n=${f.n},s=${f.s}`;
     const search = `?since=${att.since}`;
@@ -292,9 +299,10 @@ class SqlPairStore implements PairStore {
   private ensure() {
     if (this.ready) return;
     this.sql.exec('CREATE TABLE IF NOT EXISTS slots (slot TEXT PRIMARY KEY, blob BLOB NOT NULL, at INTEGER NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS pair_meta (k TEXT PRIMARY KEY, v BLOB NOT NULL)');
     this.ready = true;
   }
-  private readable() { if (this.ready) return true; if (this.hasTable()) { this.ready = true; return true; } return false; }
+  private readable() { if (this.ready) return true; if (this.hasTable()) { this.ensure(); return true; } return false; }
   get(slot: PairSlot) { if (!this.readable()) return null; const r = this.sql.exec<{ blob: ArrayBuffer; at: number }>('SELECT blob, at FROM slots WHERE slot = ?', slot).toArray(); return r.length ? { blob: new Uint8Array(r[0].blob), at: r[0].at } : null; }
   put(slot: PairSlot, blob: Uint8Array, at: number) {
     this.ensure();
@@ -303,7 +311,18 @@ class SqlPairStore implements PairStore {
     return true;
   }
   firstAt() { if (!this.readable()) return null; const r = this.sql.exec<{ m: number | null }>('SELECT MIN(at) AS m FROM slots').one(); return r.m; }
-  clear() { if (this.readable()) this.sql.exec('DELETE FROM slots'); }
+  clear() { if (this.readable()) { this.sql.exec('DELETE FROM slots'); this.sql.exec('DELETE FROM pair_meta'); } }
+  getVerifier() {
+    if (!this.readable()) return null;
+    const r = this.sql.exec<{ v: ArrayBuffer }>("SELECT v FROM pair_meta WHERE k = 'vk'").toArray();
+    return r.length ? new Uint8Array(r[0].v) : null;
+  }
+  setVerifier(pk: Uint8Array) {
+    this.ensure();
+    if (this.sql.exec("SELECT 1 FROM pair_meta WHERE k = 'vk'").toArray().length) return false;
+    this.sql.exec("INSERT INTO pair_meta (k, v) VALUES ('vk', ?)", pk);
+    return true;
+  }
 }
 
 /** One-time pairing mailbox (ciphertext only, write-once, 10 minute lifetime). */
@@ -313,7 +332,7 @@ export class PairDO extends DurableObject<Env> {
   async fetch(req: Request): Promise<Response> {
     const p = parsePathV2(new URL(req.url).pathname);
     if (!p || p.kind !== 'pair') return err(404, 'not_found', corsHeaders2());
-    const res = await handlePair(req, p.slot, this.store, Date.now());
+    const res = await handlePair(req, p.slot, this.store, Date.now(), { requireProof: !!configuredAccessSecret(this.env.RELAY_ACCESS_SECRET) });
     if (this.store.firstAt() === null) { await this.ctx.storage.deleteAll(); return res; }
     if (req.method === 'PUT' && res.ok) await this.ctx.storage.setAlarm(Date.now() + LIMITS2.pairTtlMs + 1000);
     return res;

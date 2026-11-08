@@ -93,7 +93,9 @@ describe('optional access key (configured)', () => {
     expect((await call(keyed, founder, 'POST', `/v2/g/${g.gidHex}/log`, { body: { entry: b64u(e) } })).status).toBe(401);
     expect((await call(keyed, founder, 'POST', `/v2/g/${g.gidHex}/log`, { body: { entry: b64u(e) }, accessKey: SECRET })).status).toBe(200);
     const pid = hex(randomBytes(16));
-    expect((await fetch(`${keyed}/v2/pair/${pid}/offer`)).status).toBe(404);
+    // Pairing no longer answers strangers: without a pairing-secret proof the reply is the same generic 401.
+    expect((await fetch(`${keyed}/v2/pair/${pid}/offer`)).status).toBe(401);
+    expect((await fetch(`${keyed}/v2/health?rk=${encodeURIComponent(SECRET)}`)).status).toBe(401);
   });
 
   it('a WebSocket upgrade with a bad Authorization header is refused before the socket opens', async () => {
@@ -104,7 +106,9 @@ describe('optional access key (configured)', () => {
     const { g, founder } = newGrp();
     const e = logEntry(g, founder, LogType.Genesis, [founder]);
     expect((await call(keyed, founder, 'POST', `/v2/g/${g.gidHex}/log`, { body: { entry: b64u(e) }, accessKey: SECRET })).status).toBe(200);
-    const wsUrl = keyed.replace('http', 'ws') + `/v2/g/${g.gidHex}/ws?since=0&rk=${encodeURIComponent(SECRET)}`;
+    const wsUrl = keyed.replace('http', 'ws') + `/v2/g/${g.gidHex}/ws?since=0`;
+    expect(wsUrl).not.toContain(SECRET);
+    expect(wsUrl).not.toMatch(/[?&]rk=/);
     const status = await new Promise<number>((resolve, reject) => {
       const ws = new WebSocket(wsUrl, { headers: { authorization: 'PCS2 d=00,t=1,n=x,s=y' } });
       ws.once('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
@@ -112,6 +116,78 @@ describe('optional access key (configured)', () => {
       ws.once('error', () => resolve(-1));
     });
     expect(status === 401 || status === -1).toBe(true);
+  });
+
+  it('authenticates a WebSocket with the access key in the first frame, not the URL', async () => {
+    const { authHeader, b64u, call, logEntry, newGrp, ready } = await import('./helpers2');
+    const { LogType } = await import('../src/proto2');
+    const WebSocket = (await import('ws')).default;
+    await ready();
+    const { g, founder } = newGrp();
+    const e = logEntry(g, founder, LogType.Genesis, [founder]);
+    expect((await call(keyed, founder, 'POST', `/v2/g/${g.gidHex}/log`, { body: { entry: b64u(e) }, accessKey: SECRET })).status).toBe(200);
+    const wsUrl = keyed.replace('http', 'ws') + `/v2/g/${g.gidHex}/ws?since=0`;
+    expect(wsUrl).not.toContain(SECRET);
+
+    const frameOf = (k?: string) => {
+      const h = authHeader(founder, 'WS', `/v2/g/${g.gidHex}/ws`, '?since=0', new Uint8Array(0));
+      const m = /d=([0-9a-f]+),t=(\d+),n=([^,]+),s=(.+)$/.exec(h)!;
+      return JSON.stringify({ type: 'auth', d: m[1], t: Number(m[2]), n: m[3], s: m[4], ...(k ? { k } : {}) });
+    };
+
+    const missed = new WebSocket(wsUrl);
+    await new Promise<void>((res) => missed.on('open', () => res()));
+    const missedCode = new Promise<number>((res) => missed.on('close', (c) => res(c)));
+    missed.send(frameOf());
+    expect(await missedCode).toBe(4401);
+
+    const leaked = keyed.replace('http', 'ws') + `/v2/g/${g.gidHex}/ws?since=0&rk=${encodeURIComponent(SECRET)}`;
+    const viaQuery = new WebSocket(leaked);
+    await new Promise<void>((res) => viaQuery.on('open', () => res()));
+    const viaQueryCode = new Promise<number>((res) => viaQuery.on('close', (c) => res(c)));
+    viaQuery.send(frameOf());
+    expect(await viaQueryCode).toBe(4401);
+
+    const ws = new WebSocket(wsUrl);
+    const got: any[] = [];
+    await new Promise<void>((res) => ws.on('open', () => res()));
+    ws.on('message', (m) => got.push(JSON.parse(String(m))));
+    ws.send(frameOf(SECRET));
+    await new Promise((r) => setTimeout(r, 600));
+    expect(got.map((x) => x.type)).toContain('ready');
+    ws.close();
+  });
+
+  it('pairing accepts a proof derived from the pairing secret and rejects a stranger', async () => {
+    const { ready, sha } = await import('./helpers2');
+    const { PAIR_AUTH_PK_HEADER, PAIR_AUTH_SIG_HEADER, PAIR_AUTH_TS_HEADER, b64uEncode, hex, pairAuthMessage, utf8 } = await import('../src/proto2');
+    const { randomBytes } = await import('node:crypto');
+    const sodium = (await import('libsodium-wrappers-sumo')).default;
+    await ready();
+    const kp = sodium.crypto_sign_seed_keypair(randomBytes(32));
+    const pid = hex(randomBytes(16));
+    const path = `/v2/pair/${pid}/offer`;
+    const blob = b64uEncode(randomBytes(32));
+    const body = JSON.stringify({ blob });
+    expect((await fetch(`${keyed}${path}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body })).status).toBe(401);
+
+    const sign = (method: string, bodyText: string, now: number) => {
+      const bytes = bodyText ? utf8(bodyText) : new Uint8Array(0);
+      const msg = pairAuthMessage(method, path, now, hex(sha(bytes)));
+      const sig = sodium.crypto_sign_detached(msg, kp.privateKey);
+      return {
+        [PAIR_AUTH_TS_HEADER]: String(now),
+        [PAIR_AUTH_SIG_HEADER]: b64uEncode(sig),
+        [PAIR_AUTH_PK_HEADER]: b64uEncode(kp.publicKey),
+      };
+    };
+    const now = Date.now();
+    const put = await fetch(`${keyed}${path}`, { method: 'PUT', headers: { 'content-type': 'application/json', ...sign('PUT', body, now) }, body });
+    expect(put.status).toBe(200);
+    const got = await fetch(`${keyed}${path}`, { headers: sign('GET', '', now + 1) });
+    expect(got.status).toBe(200);
+    expect((await got.json() as { blob: string }).blob).toBe(blob);
+    expect((await fetch(`${keyed}${path}`)).status).toBe(401);
   });
 });
 

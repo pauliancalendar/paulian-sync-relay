@@ -91,7 +91,7 @@ export const webCrypto2: Crypto2 = {
 };
 
 export function corsHeaders2(): Record<string, string> {
-  return { ...corsHeaders(), 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
+  return { ...corsHeaders(), 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, x-paulian-relay-key' };
 }
 const J = (body: unknown, status = 200, extra: Record<string, string> = {}) => json(body, status, { ...corsHeaders2(), ...extra });
 const E = (status: number, code: string, extra: Record<string, string> = {}) => err(status, code, { ...corsHeaders2(), ...extra });
@@ -103,12 +103,102 @@ export const RELAY_SERVICE_ID = 'paulian-sync-relay';
  * The relay software version, "major.minor.patch" (keep equal to package.json "version"). The apps compare it with the newest
  * and the oldest version they know: older than newest -> "an update is available"; older than their minimum -> sync is paused until
  * the relay is updated. Bump it whenever the relay's behaviour changes, and add the entry to UPDATE.md.
- * A relay that reports no `relayVersion` is a 1.0.0 relay (the field was added in 1.1.0). 1.2.0 removed the old protocol (v1).
+ * A relay that reports no `relayVersion` is a 1.0.0 relay (the field was added in 1.1.0). 1.2.0 removed the old protocol (v1). 1.3.0 adds an optional per-relay access key, refuses to persist storage for unknown groups, and rate-limits the public health page.
  */
-export const RELAY_VERSION = '1.2.0';
+export const RELAY_VERSION = '1.3.0';
 
 export function healthResponse2(impl: string): Response {
   return J({ ok: true, service: RELAY_SERVICE_ID, relayVersion: RELAY_VERSION, protocol: PROTOCOL_VERSION_V2, versions: [2], impl });
+}
+
+/** Header the apps send when the owner set a per-relay access key. Also accepted as the `rk` query on WebSocket URLs (browsers cannot set custom headers on `WebSocket`). */
+export const RELAY_ACCESS_HEADER = 'x-paulian-relay-key';
+export const RELAY_ACCESS_QUERY = 'rk';
+
+export function configuredAccessSecret(envSecret: string | undefined | null): string | null {
+  const s = (envSecret ?? '').trim();
+  return s.length ? s : null;
+}
+
+export function providedAccessSecret(req: Request): string {
+  const h = req.headers.get(RELAY_ACCESS_HEADER);
+  if (h && h.trim()) return h.trim();
+  try { return new URL(req.url).searchParams.get(RELAY_ACCESS_QUERY)?.trim() ?? ''; } catch { return ''; }
+}
+
+/** Compare two strings by SHA-256 so a missing or short value takes the same work as a long one. */
+export async function secretsDigestEqual(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const ha = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode('paulian-relay-access|' + a)));
+  const hb = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode('paulian-relay-access|' + b)));
+  let d = 0;
+  for (let i = 0; i < ha.length; i++) d |= ha[i] ^ hb[i];
+  return d === 0;
+}
+
+/** When no access key is configured, every request is allowed through (older relays, or a hosted relay that has none). */
+export async function accessSecretOk(req: Request, envSecret: string | undefined | null): Promise<boolean> {
+  const configured = configuredAccessSecret(envSecret);
+  if (!configured) return true;
+  return secretsDigestEqual(providedAccessSecret(req), configured);
+}
+
+export function isPairPath(pathname: string): boolean {
+  return parsePathV2(pathname)?.kind === 'pair';
+}
+
+/**
+ * True when this store has never accepted a real write (no membership log, no changes, no last-write day).
+ * Used to drop leftover empty Durable Object storage after a failed probe. Clears in-memory tables as well.
+ */
+export function discardEmptyProbe(store: GroupStoreV2): boolean {
+  if (store.logLength() > 0 || store.usage().count > 0 || store.lastWriteDay() !== null) return false;
+  store.clearAll();
+  return true;
+}
+
+/**
+ * A request may create a group Durable Object only when it is a genuine genesis or a verified seed of the
+ * whole membership log, signed by a member of the state that batch ends in. Anything else (including a
+ * well-formed signature for a group this relay has never seen) is rejected in the Worker so the object is
+ * never constructed.
+ */
+export async function verifyCreateGroupRequest(
+  crypto: Crypto2,
+  gid: string,
+  method: string,
+  path: string,
+  search: string,
+  body: Uint8Array,
+  header: string | null,
+): Promise<boolean> {
+  if (method !== 'POST' || !/\/log\/?$/.test(path)) return false;
+  let j: any;
+  try { j = JSON.parse(new TextDecoder().decode(body)); } catch { return false; }
+  const store = new MemoryGroupStore();
+  const ctx: GroupContext2 = {
+    gid, store, crypto,
+    pushBucket: new TokenBucket(1_000, 1_000),
+    readBucket: new TokenBucket(1_000, 1_000),
+    broadcast() {},
+  };
+  const authArgs = { method, path, search, body, header };
+  try {
+    if (Array.isArray(j?.entries)) {
+      // A seed must look like one (signed, decodable entries) so strangers cannot create objects with a GET
+      // or an empty POST. Whether the entries actually apply is left to the group handler, which returns the
+      // protocol error (409, bad_signature, ...) and persists nothing on failure.
+      if (!j.entries.length || j.entries.length > 64 || !j.entries.every((x: unknown) => typeof x === 'string')) return false;
+      if (!parseAuth(header)) return false;
+      for (const x of j.entries as string[]) { if (!b64uDecode(x)) return false; }
+      return true;
+    }
+    const raw = typeof j?.entry === 'string' ? b64uDecode(j.entry) : null;
+    const parsed = raw ? parseLogEntry(raw) : null;
+    if (!raw || !parsed || parsed.type !== LogType.Genesis || !parsed.members[0]) return false;
+    if (!(await applyLogEntry(crypto, unhex(gid), emptyState(), raw)).ok) return false;
+    return (await authenticate(ctx, authArgs, parsed.members[0])).ok;
+  } catch { return false; }
 }
 
 export function parsePathV2(pathname: string): { kind: 'group'; gid: string; sub: string } | { kind: 'pair'; pid: string; slot: string } | null {

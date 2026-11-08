@@ -26,7 +26,12 @@ denial of service by the relay.
   single-use nonce, body hash in the signed string. Non-members, unknown groups and removed devices all receive the same `401`.
 * Pairing no longer hands out a group secret. The 24 words / QR are a **one-time** mailbox secret (10 minutes, write-once) and
   the new device gets keys only after an existing member approves it by comparing a 6-digit code.
-* Per-group, per-IP rate limits, 3 MiB body cap, 64 MiB / 50 000-change group quota, 16 sockets per group.
+* Per-group, per-IP rate limits (including a cap on the health page and on new group or pairing allocations), 3 MiB body cap, 64 MiB / 50 000-change group quota, 16 sockets per group.
+* From relay 1.3.0 an optional per-relay access key (`RELAY_ACCESS_SECRET`, sent as `x-paulian-relay-key`) stops anyone
+  who only knows or guesses the URL from using the relay or reading its health page. It is not a second encryption key:
+  calendar data is still encrypted on the devices. A relay with no key configured keeps the previous behaviour.
+* Unknown group ids do not create empty Durable Object storage. A guessed address can still reach the Worker (it is a
+  public HTTPS URL) and the pairing mailbox (the mailbox id is 128 random bits from the pairing code).
 * Tests: relay API suite (unauthenticated, wrong key, replayed nonce, skewed clock, removed member, tampered body); client tests for 401 handling.
 
 ### 2. Metadata exposure
@@ -111,6 +116,14 @@ sync with "delete from relays".
 10. **Leaving without deleting** relies on the remaining members rotating; until they do, the leaver's keys still work for that epoch.
 11. JavaScript memory is garbage-collected: copies of strings and decrypted data cannot be guaranteed wiped.
 12. The pairing code is secret for 10 minutes; a person who gets it within that window and a matching 6-digit code can be approved by a distracted user. Compare the digits.
+13. The relay URL is reachable on the public internet, random name or not. The access key hides the health page and
+    blocks group requests from strangers, but pairing slots do not require that key (so a joining device can read the
+    offer that carries it). The pairing id is 128 random bits; empty pairing objects are not persisted.
+14. Desktop WebSockets cannot send custom headers, so the access key is also accepted as the `rk` query parameter on
+    the WebSocket URL. Request logs are off by default; if someone later turned them on, that query would appear there.
+    Prefer the `x-paulian-relay-key` header on ordinary HTTP requests.
+15. A random Worker name stops casual scanning of a well-known name; it is not a secret. The access key and the
+    membership signatures are what stop misuse.
 
 ## 6. Reporting
 

@@ -14,6 +14,7 @@ Open `https://<your address>/v2/health` in a browser (your address is the one en
 
 | Version | What changed |
 |---|---|
+| 1.3.0 | Optional access key (`RELAY_ACCESS_SECRET`) so a guessed address cannot use the relay; health page is rate-limited and, with a key set, no longer answers strangers; unknown group ids no longer create empty storage; new deploys should use a random `paulian-calendar-sync-` name. Your existing name and data stay as they are if you keep the same Worker name. After you set an access key, paste it in the app on each device you already use (Sync → Advanced), or add a device again so the key is handed over automatically. |
 | 1.2.0 | The old sync protocol is removed (`/v1/...` now answers 404). Updating deletes any data your server still holds in that old format; calendars and diaries synced with the current protocol are not affected. Apps now check `/v2/health`. |
 | 1.1.0 | The health page now shows `relayVersion`, so the app can tell you when an update is available. |
 | 1.0.0 | First public version. |
@@ -35,8 +36,11 @@ account. Cloudflare rebuilds and redeploys your server every time that copy chan
    deployment as it finishes. Then open `https://<your address>/v2/health` again: `relayVersion` should show the new number.
 
 Do **not** rename your server and do **not** delete it. A server with a different name is a new, empty server, and your
-devices would have to be set up on it again. Keep the same name (normally `paulian-sync-server`; a server set up from an older version of this project may be called `paulian-sync-relay`).
-The name is the `name = "…"` line at the top of `wrangler.toml`. If your server has the older name, change that line back to it after you copy the new file in, so the update goes to your existing server.
+devices would have to be set up on it again. Keep the same name you already use (`paulian-sync-server` for many servers,
+`paulian-sync-relay` for some older ones, or `paulian-calendar-sync-` plus eight characters if you chose a unique name).
+The name is the `name = "…"` line at the top of `wrangler.toml`. The new file may still say `paulian-sync-server`; if
+your server has a different name, change that line back to your name after you copy the new file in, so the update goes
+to your existing server.
 
 ## If you are comfortable with a command line
 
@@ -45,7 +49,7 @@ git clone https://github.com/pauliancalendar/paulian-sync-relay
 cd paulian-sync-relay
 npm ci
 npx wrangler login
-npx wrangler deploy --name paulian-sync-server   # use the exact name of your existing server (an older one may be paulian-sync-relay)
+npx wrangler deploy --name paulian-sync-server   # use the exact name of your existing server (an older one may be paulian-sync-relay; a newer one may be paulian-calendar-sync-________)
 ```
 
 Using the same server name updates your existing server and keeps its data.
@@ -60,5 +64,7 @@ press *Sync now*). If it does not, see the table in [DEPLOY.md](DEPLOY.md).
 * Check the build log in the Cloudflare dashboard (*Workers & Pages* → your server → *Deployments*).
 * Make sure you replaced `src` completely (old files left behind can cause a build error).
 * Your data is safe: the calendar and diary on your devices are never touched by an update.
-* Going back to an older version of the files is not supported after updating to 1.2.0 (the update removes the storage the old
-  protocol used). If something is wrong, fix the build and redeploy 1.2.0.
+* Going back to an older version of the files is not supported after updating to 1.2.0 or later (the 1.2.0 update removes the storage the old
+  protocol used). If something is wrong, fix the build and redeploy the current version.
+* Adding an access key is optional when you update. Until you set `RELAY_ACCESS_SECRET`, the server keeps accepting
+  requests the old way. Once you set it, every device must send it.

@@ -45,7 +45,7 @@ the sender (split the Yjs update).
 ## 4. Authenticated relay access (fixes: anyone with the gid could read)
 
 Every HTTP request, and the first WebSocket frame, carries a signature by a device that is a **current member** per the
-membership log held by the relay.
+membership log held by the relay. From relay 1.3.0 an optional per-relay access key may also be required (see below).
 
 ```
 Authorization: PCS2 d=<deviceId hex>,t=<unix ms>,n=<nonce b64u>,s=<signature b64u>
@@ -60,16 +60,34 @@ signature     = Ed25519(edSk, UTF-8 of the string)
   `401 unauthorized` (the relay never confirms that a group exists). A stale timestamp gives `401 stale_timestamp` and a repeated
   nonce `401 replayed_request` (these two reveal nothing about membership). A removed device therefore just sees 401s and
   concludes `access_lost` after 3 in a row; an already-open WebSocket of a removed device is closed with 4403.
-* WebSocket `/v2/g/<gid>/ws?since=N`: first frame `{"type":"auth","d":..,"t":..,"n":..,"s":..}` within 10 s, signed with method `WS`,
-  path `/v2/g/<gid>/ws`, query `?since=N` (canonicalised) and an empty body. The server then replays everything after `since` as
+* WebSocket `/v2/g/<gid>/ws?since=N`: if the request includes `Authorization`, the relay verifies it before accepting the
+  upgrade and otherwise returns the same `401 unauthorized`. Browsers cannot set that header, so desktop apps still send a
+  first frame `{"type":"auth","d":..,"t":..,"n":..,"s":..}` within 10 s, signed with method `WS`,
+  path `/v2/g/<gid>/ws`, query `?since=N` (canonicalised) and an empty body. A socket that is waiting for that frame must
+  not persist storage or set an alarm. The server then replays everything after `since` as
   `{"type":"changes","changes":[{"seq","blob"}]}` frames, sends `{"type":"ready","latest","epoch","head","logLength"}`, and pushes
   further `changes` frames live (a client that sees `logLength` grow pulls the log over HTTP). `ping` is answered with `pong`.
   Close codes: 4401 auth (bad frame, bad signature, 10 s timeout), 4403 removed, 4429 rate limited, 4000 group deleted.
-* Public: `GET /v2/health` (also `/`) -> `{ok, service:"paulian-sync-relay", relayVersion, protocol:2, versions:[2], impl}`. Nothing else is public.
+* Health: `GET /v2/health` (also `/`) -> `{ok, service:"paulian-sync-relay", relayVersion, protocol:2, versions:[2], impl}`.
+  This page is rate-limited per IP. When `RELAY_ACCESS_SECRET` is configured, the page requires the access key and
+  otherwise returns the same generic `401 unauthorized` as every other guarded path (it no longer advertises itself to
+  strangers). When the secret is not configured, the page stays public so older relays and older apps keep working.
   `relayVersion` is the relay software version (semver `x.y.z`); a missing field means 1.0.0.
   Apps compare it with two constants (`relayVersion.ts`): below `LATEST_RELAY_VERSION` -> a dismissible "update available" note
   (dismissal remembered per latest version); below `MIN_RELAY_VERSION` -> sync is paused with a clear message until the relay is updated
   (local data untouched). An unreadable answer keeps the previous verdict. Update guide: `UPDATE.md` in the public relay repository.
+
+From relay 1.3.0, if the Worker secret `RELAY_ACCESS_SECRET` is set, every request except `OPTIONS` and the pairing
+mailbox (`/v2/pair/...`) must also send that value as the header `x-paulian-relay-key` (or, on a WebSocket URL that
+cannot carry custom headers, as the `rk` query parameter, which is not part of the signed query). A missing or wrong
+value produces the same generic `401 unauthorized`. Pairing is exempt so a new device can fetch the encrypted offer,
+which itself carries the access key; after that the new device sends the key like any other member. A relay with no
+secret configured ignores the header and behaves as before.
+
+An unknown group id is not turned into a Durable Object unless the request is a verified genesis or a verified seed of
+the membership log (`POST /v2/g/{gid}/log`). Failed probes leave no tables. Empty leftover objects are deleted by the
+daily alarm. New group creations and pairing `PUT`s are rate-limited per IP on top of the existing per-IP and per-group
+limits.
 
 ### Endpoints
 
@@ -170,8 +188,10 @@ Binding the epoch's start hash into the AAD makes a message undecryptable under 
 
 1. Existing device A shows a one-time **pairing secret** `ps` (32 random bytes) as 24 words or `pcsync2:`+b64u QR. `ps` is **not**
    a group key. `pid = HKDF(ps, "paulian-sync/v2/pair-id", 16)` (mailbox name), `mk = HKDF(ps, "paulian-sync/v2/pair-key", 32)`.
-2. A writes slot `offer` to `PUT /v2/pair/{pid hex}/offer` on every enabled relay (it only needs one to succeed): `{v:2, gid, relays:[...]}`, sealed as
-   `nonce24 || AEAD(mk, nonce, json, aad = "paulian-sync/v2/pair/offer" || pid)`.
+2. A writes slot `offer` to `PUT /v2/pair/{pid hex}/offer` on every enabled relay (it only needs one to succeed): `{v:2, gid, relays:[...], relayKeys?: {url: accessKey}}`, sealed as
+   `nonce24 || AEAD(mk, nonce, json, aad = "paulian-sync/v2/pair/offer" || pid)`. `relays` stays an array of URL strings so older
+   readers still understand the offer. `relayKeys` is optional and ignored by older apps; a 1.3.0 reader copies any keys
+   it recognizes onto the matching relay URLs. The `welcome` slot may repeat `relayKeys` as a backup.
 3. New device B scans/types the code, reads `offer`, generates its fresh group keys and writes `join`:
    `{v:2, ed:hex, x:hex, name}`: **lowercase hex, 64 chars each, not base64url** (same sealing, slot name `join`). A reader may also accept b64u (older Mac/Windows desktop builds wrote it).
 4. Both screens show a **6-digit SAS**: first 4 bytes of `SHA-256("paulian-sync/v2/sas" || gid || joinerEd || joinerX || pid)`
@@ -259,7 +279,7 @@ Rules every implementation follows:
   snapshot** is pruned. Members may compact at any time with a snapshot.
 * Clients treat the relay as a cache: the device that holds a change keeps it until the relay has acknowledged it, and a client
   that still holds the state can write a fresh snapshot and re-seed the membership log of an empty relay. A relay that deletes early only costs availability, never confidentiality.
-* The Durable Objects store no IP addresses or user agents; Workers observability (request logs) is disabled by default in `wrangler.toml`; per-IP (Workers Rate Limiting) and per-group token-bucket limits apply. The Cloudflare edge itself necessarily sees client IPs.
+* The Durable Objects store no IP addresses or user agents; Workers observability (request logs) is disabled by default in `wrangler.toml`; per-IP (Workers Rate Limiting, including a tighter cap on `/v2/health` and on new group or pairing allocations) and per-group token-bucket limits apply. The Cloudflare edge itself necessarily sees client IPs.
 
 ## 11. Metadata that remains visible to the relay
 
@@ -271,14 +291,19 @@ Mitigation: batch writes (clients delay and coalesce uploads, default 1-5 s rand
 ## 12. Deployment and retired protocol
 
 The relay speaks protocol 2 only. The earlier protocol (a single shared group secret with unauthenticated reads) has been removed from the
-relay and from the apps: every `/v1/*` path answers `404`, and there are no `V1_*` settings. Settings: `RETENTION_DAYS_V2` (default 90).
+relay and from the apps: every `/v1/*` path answers `404`, and there are no `V1_*` settings. Settings: `RETENTION_DAYS_V2` (default 90). Optional secret: `RELAY_ACCESS_SECRET` (when unset, the relay does not require an access key).
 
 * **Durable Object migration.** Relay 1.2.0 deletes the Durable Object class that held old-protocol groups (`deleted_classes = ["GroupDO"]`,
   migration tag `v3`, appended after `v1` and `v2` in `wrangler.toml`). A fresh deployment runs the three migrations in order and ends with
   the v2 classes only. An existing 1.0.x/1.1.x deployment is at tag `v2` and runs only `v3`; the old-protocol data on it is deleted
   irreversibly, v2 groups are unaffected. Never edit or reorder existing migration tags.
+  Relay 1.3.0 appends tag `v4` (`new_sqlite_classes = ["RegistryDO"]`), a small index of group ids that have been
+  created or seeded, so probes do not instantiate group objects. Existing groups are re-listed the first time a member
+  seeds or writes after the update.
 * **Updating.** `UPDATE.md` in the public relay repository describes how a user updates their own relay. `MIN_RELAY_VERSION` stays 1.0.0 (a
-  1.0.x relay still speaks protocol 2); `LATEST_RELAY_VERSION` is 1.2.0 and triggers the "update available" note.
+  1.0.x relay still speaks protocol 2); `LATEST_RELAY_VERSION` is 1.3.0 and triggers the "update available" note.
+  New deploys should use a Worker name `paulian-calendar-sync-` plus 8 random lowercase letters or digits. An update
+  must keep the server’s existing name.
 * **Probing.** Apps probe `GET /v2/health` (the relay also answers `/`). A client that still probes `/v1/health` (older Android builds) gets
   `404` from a 1.2.0 relay until it is updated.
 * **Client states.** A device whose stored sync group is of the retired protocol, or points at an address the app no longer allows, does not

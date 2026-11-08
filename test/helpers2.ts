@@ -63,13 +63,14 @@ export function envelope(g: Grp, d: Dev, o: { epoch?: number; index?: number; bu
 
 export const b64u = b64uEncode;
 
-export async function call(base: string, d: Dev | null, method: string, path: string, opts: { search?: string; body?: unknown; raw?: Uint8Array; hdr?: string } = {}) {
+export async function call(base: string, d: Dev | null, method: string, path: string, opts: { search?: string; body?: unknown; raw?: Uint8Array; hdr?: string; accessKey?: string } = {}) {
   const search = opts.search ?? '';
   const bodyBytes = opts.raw ?? (opts.body === undefined ? new Uint8Array(0) : utf8(JSON.stringify(opts.body)));
   const headers: Record<string, string> = {};
   if (bodyBytes.length) headers['content-type'] = 'application/json';
   if (opts.hdr) headers.authorization = opts.hdr;
   else if (d) headers.authorization = authHeader(d, method, path, search, bodyBytes);
+  if (opts.accessKey) headers['x-paulian-relay-key'] = opts.accessKey;
   const res = await fetch(base + path + search, { method, headers, body: bodyBytes.length ? (bodyBytes as unknown as BodyInit) : undefined });
   let json: any = null;
   try { json = await res.json(); } catch { /* none */ }

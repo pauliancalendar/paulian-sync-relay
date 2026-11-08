@@ -1,5 +1,6 @@
 # Paulian Sync relay: the template that "Deploy to Cloudflare" uses. Works on the Workers FREE plan.
 # No account name, route or domain in here: your relay lives at https://<worker-name>.<your-subdomain>.workers.dev
+# When updating an existing server, keep this name line as it is. New deploys should use paulian-calendar-sync- plus 8 random lowercase letters or digits (see scripts/setup-relay.mjs).
 name = "paulian-sync-server"
 main = "src/index.ts"
 # Set this to a recent date when you update the project.
@@ -18,6 +19,10 @@ class_name = "GroupV2DO"
 name = "PAIRS"
 class_name = "PairDO"
 
+[[durable_objects.bindings]]
+name = "REGISTRY"
+class_name = "RegistryDO"
+
 # Durable Object migrations: an ordered history. Cloudflare remembers the last tag a Worker has applied and runs only the
 # entries after it, so NEVER edit, remove or reorder an existing entry; only append new ones.
 #   - a NEW relay applies all three entries in order and ends with GroupV2DO and PairDO (GroupDO is created and removed again);
@@ -35,11 +40,27 @@ new_sqlite_classes = ["GroupV2DO", "PairDO"]
 tag = "v3"
 deleted_classes = ["GroupDO"]
 
+# 1.3.0: a single registry of group ids that have been successfully created or seeded.
+# Existing v2 groups stay where they are; the first verified seed after an update re-lists them.
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["RegistryDO"]
+
 # Per-IP rate limit in front of the per-group limits (Workers Rate Limiting API). Needs no setup.
 [[ratelimits]]
 name = "IP_LIMITER"
 namespace_id = "1001"
 simple = { limit = 300, period = 60 }
+
+[[ratelimits]]
+name = "HEALTH_LIMITER"
+namespace_id = "1002"
+simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "ALLOC_LIMITER"
+namespace_id = "1003"
+simple = { limit = 120, period = 60 }
 
 [vars]
 # Delete a group's data after this many days without any sync activity (and prune snapshot-covered history of that age).

@@ -31,7 +31,7 @@ import {
  * accepted only if it was signed with the matching private key, which never leaves the publisher's own computer.
  * To change it, a release signed with the OLD key must ship a new copy of this file.
  */
-export const PUBLISHER_PUBLIC_KEY = 'PASTE_THE_PUBLISHER_PUBLIC_KEY_HERE';
+export const PUBLISHER_PUBLIC_KEY = 'tVB/AZ7BDaUYFdYHObJ9nvwO1jOE3pufqX0Z1vEzUlc=';
 
 const RELEASE_BASE = `https://github.com/${UPSTREAM_REPO}/releases/latest/download`;
 const rawUrl = (tag, path) => `https://raw.githubusercontent.com/${UPSTREAM_REPO}/${tag}/${path}`;

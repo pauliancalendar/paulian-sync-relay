@@ -1,0 +1,12 @@
+{
+  "version": "1.3.0",
+  "released": "2026-11-08",
+  "minApp": "1.0.3",
+  "security": true,
+  "notes": [
+    "You can add a private key so only your devices can use your server.",
+    "Strangers who guess your server's address can no longer use it or see its status.",
+    "Adding a new device is safer: it must prove it has your pairing code.",
+    "Your calendar and diary stay exactly as they are. Nothing is deleted."
+  ]
+}

@@ -14,6 +14,13 @@ makers of the app, ever receives your sync data.
 
 Step-by-step guide with troubleshooting: **[DEPLOY.md](DEPLOY.md)**. Updating a relay you already run: **[UPDATE.md](UPDATE.md)**.
 
+## Update from the app
+
+When the app says your sync server has an update, press **Update on GitHub**, then on GitHub **Run workflow** →
+**Run workflow**. The *Update my server* workflow installs the newest **signed** release into your copy, keeps your
+server's name and settings, and Cloudflare redeploys it. Copies made before this feature need one manual update first
+(see [UPDATE.md](UPDATE.md)).
+
 ## What is in here
 
 * Cloudflare Worker (`src/index.ts`) plus Durable Objects (one per sync group, SQLite storage, WebSocket hibernation).
@@ -24,6 +31,10 @@ Step-by-step guide with troubleshooting: **[DEPLOY.md](DEPLOY.md)**. Updating a 
 * Optional secret `RELAY_ACCESS_SECRET`: a key only your apps send. New installs should set it
   (the app shows you one). An older server with no secret keeps working until you add one.
 * `docs/PROTOCOL_V2.md` (wire protocol) and `docs/SECURITY.md` (threat model).
+* `.github/workflows/update-server.yml` + `scripts/update-server.mjs`: the *Update my server* workflow (runs only when
+  you press Run workflow; needs only permission to write this repository's files).
+* `scripts/build-release.mjs`, `scripts/sign-manifest.mjs`, `release-notes.json`: publisher tools for signed releases
+  (see *Publishing a release* in UPDATE.md).
 
 The Paulian Calendar apps only connect to **Cloudflare-hosted** relays on `*.workers.dev`.
 

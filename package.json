@@ -10,7 +10,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:unit": "vitest run test/core.test.ts test/core2.test.ts test/hardening.test.ts test/pair_auth.test.ts",
+    "test:unit": "vitest run test/core.test.ts test/core2.test.ts test/hardening.test.ts test/pair_auth.test.ts test/release.test.mjs",
     "setup": "node scripts/setup-relay.mjs"
   },
   "engines": {

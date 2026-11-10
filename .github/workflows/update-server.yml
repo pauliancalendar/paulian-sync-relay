@@ -1,0 +1,20 @@
+# "Update my server": press Actions → Update my server → Run workflow on GitHub.
+# It installs the latest SIGNED Paulian sync server release into this repository; Cloudflare then redeploys your server.
+# Kept deliberately tiny and stable: GitHub's built-in token cannot change files in .github/workflows, so all the logic
+# (download, signature and hash checks, keeping your Worker name and settings) is in scripts/update-server.mjs,
+# which every verified release can improve. See UPDATE.md.
+name: Update my server
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: update-server
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: node scripts/update-server.mjs

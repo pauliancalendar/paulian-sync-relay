@@ -131,7 +131,8 @@ npx wrangler secret put RELAY_ACCESS_SECRET   # paste the access key that was pr
 
 ## Updating, moving and deleting
 
-* **Update:** see [UPDATE.md](UPDATE.md). Paulian Calendar also tells you when an update is available. Your sync data stays in place.
+* **Update:** when Paulian Calendar says an update is available, press **Update on GitHub**, then **Run workflow** →
+  **Run workflow** on GitHub (see [UPDATE.md](UPDATE.md)). Your sync data stays in place.
 * **Delete everything:** delete the Worker in the Cloudflare dashboard (open the Worker → *Settings* → *Delete*).
   That removes all stored (encrypted) data. Your devices keep their local calendars.
 * **Data retention:** a sync group with no activity for 90 days (`RETENTION_DAYS_V2`) is deleted from your relay.

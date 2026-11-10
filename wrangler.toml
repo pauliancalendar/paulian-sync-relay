@@ -1,6 +1,7 @@
 # Paulian Sync relay: the template that "Deploy to Cloudflare" uses. Works on the Workers FREE plan.
 # No account name, route or domain in here: your relay lives at https://<worker-name>.<your-subdomain>.workers.dev
-# When updating an existing server, keep this name line as it is. New deploys should use paulian-calendar-sync- plus 8 random lowercase letters or digits (see scripts/setup-relay.mjs).
+# When updating an existing server, keep this name line as it is. New deploys should use paulian-calendar-sync- plus 8 random lowercase letters or digits (see scripts/setup-relay.mjs);
+# on the Deploy to Cloudflare setup page, type that name in the "Project name" box, which sets this Worker name.
 name = "paulian-sync-server"
 main = "src/index.ts"
 # Set this to a recent date when you update the project.

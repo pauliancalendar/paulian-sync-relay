@@ -4,7 +4,7 @@ You need: a web browser, an email address you can confirm, a free Cloudflare acc
 account (Cloudflare copies this project into it so you keep a copy you control). No credit card is needed for the
 Workers Free plan. You do not need to install anything if you use the button below.
 
-The app (Sync → Set up your sync server) shows a **Worker name** and an **access key** for you to copy. Use those
+The app (Sync → Set up your sync server) shows a **Project name** and an **access key** for you to copy. Use those
 when Cloudflare asks, so you do not have to invent them yourself.
 
 ## What you will do
@@ -12,9 +12,9 @@ when Cloudflare asks, so you do not have to invent them yourself.
 1. Open the Deploy to Cloudflare page from the README or from the app.
 2. Sign in to Cloudflare (or create a free account and confirm the email they send).
 3. Connect GitHub or GitLab when asked, so Cloudflare can save your own copy of this project.
-4. On the setup page, set the Worker name to the unique name from the app and paste the access key if you are
-   asked for a secret named `RELAY_ACCESS_SECRET`. Leave other fields at their defaults unless you have a
-   reason to change them.
+4. On the setup page, replace `paulian-sync-server` in the **Project name** box with the unique name from the
+   app, and paste the access key if you are asked for a secret named `RELAY_ACCESS_SECRET`. Leave other fields
+   at their defaults unless you have a reason to change them.
 5. Start the deploy and wait until it finishes.
 6. Copy the address that ends in `.workers.dev`, paste it into Paulian Calendar with the same access key, and
    press *Check and continue*.
@@ -22,7 +22,7 @@ when Cloudflare asks, so you do not have to invent them yourself.
 ## The Cloudflare screens, step by step
 
 Cloudflare’s pages change their wording from time to time. If a label does not match exactly, look for the
-same idea (sign in, connect a Git account, Worker name, secret, deploy).
+same idea (sign in, connect a Git account, Project name, secret, deploy).
 
 ### 1. Sign in
 
@@ -39,13 +39,14 @@ a **private** repository for your copy, keep that selected so your copy is not l
 
 ### 3. The setup page (the page with several fields)
 
-Cloudflare describes this as a single setup page where you can customize details such as the **repository name**,
-the **Worker name**, and required resource names. You may also be asked for secrets listed in this project.
+Cloudflare describes this as a single setup page where you can customize details such as the
+**Git repository name**, the **Project name** (your Worker’s name), and required resource names. You may also be
+asked for secrets listed in this project.
 
-- **Worker name:** do not leave the default if the app showed you a name. Paste the name from Paulian Calendar.
-  It looks like `paulian-calendar-sync-` followed by 8 lowercase letters or digits (for example
-  `paulian-calendar-sync-k7m2nq9p`). That name becomes the first part of your address.
-- **Repository name:** you can leave the suggested name, or match the Worker name. Either is fine.
+- **Project name:** this box is filled in with `paulian-sync-server`. Replace it with the name from Paulian Calendar
+  (this becomes your Worker’s name and its workers.dev address). It looks like `paulian-calendar-sync-` followed
+  by 8 lowercase letters or digits (for example `paulian-calendar-sync-k7m2nq9p`).
+- **Git repository name:** this can stay as suggested.
 - **Other resource names:** leave them as they are. This project already includes the storage it needs
   (Durable Objects). Cloudflare provisions those from the configuration file; you do not create them by hand.
 - **Build or deploy commands:** if those fields appear, you can accept what Cloudflare filled in.

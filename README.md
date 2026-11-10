@@ -7,8 +7,8 @@ makers of the app, ever receives your sync data.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/pauliancalendar/paulian-sync-relay)
 
-1. In Paulian Calendar open **Sync → Set up your sync server**. The app shows a Worker name and an access key; keep that window open.
-2. Press the button above and follow Cloudflare’s steps (free account, no card needed for the Workers Free plan). Use the Worker name from the app, and paste the access key if you are asked for `RELAY_ACCESS_SECRET`.
+1. In Paulian Calendar open **Sync → Set up your sync server**. The app shows a Project name and an access key; keep that window open.
+2. Press the button above and follow Cloudflare’s steps (free account, no card needed for the Workers Free plan). In the **Project name** box, replace `paulian-sync-server` with the name from the app (this becomes your Worker’s name and its workers.dev address); the Git repository name can stay as suggested. Paste the access key if you are asked for `RELAY_ACCESS_SECRET`.
 3. Copy the address of your new Worker (it ends in `.workers.dev`).
 4. Paste the address and the same access key into the app and press **Check and continue**.
 

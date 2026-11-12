@@ -7,7 +7,7 @@
   "description": "Paulian Calendar sync relay for Cloudflare Workers + Durable Objects (free plan). Deploy your own: end-to-end encrypted, optional access key.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "node scripts/setup-relay.mjs --enable-workers-dev && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run test/core.test.ts test/core2.test.ts test/hardening.test.ts test/pair_auth.test.ts test/release.test.mjs",

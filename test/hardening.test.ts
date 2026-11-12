@@ -82,7 +82,24 @@ describe('setup script', () => {
     expect(key?.[1]).toHaveLength(64);
     const toml = readFileSync(join(root, 'wrangler.toml'), 'utf8');
     expect(toml).toMatch(/^name = "paulian-sync-server"$/m);
+    expect(toml).toMatch(/^workers_dev = true$/m);
+    expect(toml).toMatch(/^preview_urls = false$/m);
     expect(toml).not.toContain(name![1]);
     expect(toml).not.toContain(key![1]);
+  });
+
+  it('turns the production address on for whatever the project name already is', async () => {
+    const { ensureWorkersDev } = await import('../scripts/setup-relay.mjs');
+    const before = [
+      'name = "paulian-calendar-sync-k7m2nq9p"',
+      'workers_dev = false',
+      'preview_urls = true',
+      '',
+    ].join('\n');
+    const after = ensureWorkersDev(before);
+    expect(after).toContain('name = "paulian-calendar-sync-k7m2nq9p"');
+    expect(after).toMatch(/^workers_dev = true$/m);
+    expect(after).toMatch(/^preview_urls = false$/m);
+    expect(after).not.toContain('paulian-sync-server');
   });
 });

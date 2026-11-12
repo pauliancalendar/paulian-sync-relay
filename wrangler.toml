@@ -7,8 +7,12 @@ main = "src/index.ts"
 # Set this to a recent date when you update the project.
 compatibility_date = "2026-10-01"
 
-# Your relay's address (the one you paste into Paulian Calendar) is the workers.dev address.
+# The address pasted into Paulian Calendar is the Production workers.dev address.
+# It uses the project name on the name line above. The Deploy page replaces
+# paulian-sync-server with the name from the app. These two lines turn that
+# address on during deploy and leave the Preview address off.
 workers_dev = true
+preview_urls = false
 
 # Free plan: Durable Objects must use the SQLite storage backend (the migrations below do that).
 # One Durable Object per sync group, plus a short-lived pairing mailbox per pairing id.
